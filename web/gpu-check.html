@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wav2Lip GPU check</title><link rel="icon" href="data:,">
+<style>body{margin:0;background:#07060d;color:#ece9ff;font:14px/1.5 ui-monospace,monospace;padding:16px}h1{font:600 18px system-ui;color:#05d9e8}pre{white-space:pre-wrap;overflow-wrap:anywhere}button{font:600 15px system-ui;min-height:44px;padding:0 16px;background:#f9f002;border:0}</style>
+</head><body><h1>Wav2Lip GPU correctness check</h1>
+<p>Runs one real sample on CPU and WebGPU and checks the GPU output follows the audio. Takes up to a minute.</p>
+<button id="copy">Copy results</button>
+<pre id="out"></pre>
+<script>document.getElementById('copy').onclick=()=>navigator.clipboard.writeText(document.getElementById('out').textContent).catch(()=>{});</script>
+<script type="module" src="./gpucheck.js"></script></body></html>

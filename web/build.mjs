@@ -23,6 +23,10 @@ await build({
   define: { __BUILD__: JSON.stringify(BUILD) },
 });
 cpSync('index.html', `${out}/index.html`);
+// Diagnostic page: one real sample on CPU vs WebGPU (precision / audio-following check).
+await build({ entryPoints: ['src/gpucheck.js'], bundle: true, format: 'esm', minify: true, target: 'es2022', outfile: `${out}/gpucheck.js`, legalComments: 'none' });
+cpSync('gpu-check.html', `${out}/gpu-check.html`);
+cpSync('test', `${out}/test`, { recursive: true });
 cpSync('coi-sw.js', `${out}/coi-sw.js`); // must sit at the site root to control the page
 
 // LiteRT.js picks the relaxed-SIMD, compat or (when cross-origin isolated) threaded build at runtime.

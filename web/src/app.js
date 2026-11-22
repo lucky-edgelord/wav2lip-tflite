@@ -162,7 +162,10 @@ function dl({ label, url, got, total, done, error, cached, note }) {
 const gpuLostKey = () => `w2l-gpu-lost:${manifest?.gpu?.file || 'gpu'}`;
 const gpuLostBefore = () => { try { return !!localStorage.getItem(gpuLostKey()); } catch { return false; } };
 const rememberGpuLost = (why) => { try { localStorage.setItem(gpuLostKey(), `${new Date().toISOString()} ${why}`); } catch {} };
-const preferredKey = () => ($('accel').value === 'wasm' || !navigator.gpu || ($('accel').value === 'auto' && gpuLostBefore()) ? 'cpu' : 'gpu');
+// Auto uses the CPU: LiteRT.js WebGPU currently runs this model but ignores the audio input
+// (mouth stays closed), verified on Adreno 6xx and SwiftShader. GPU is opt-in until fixed.
+const GPU_AUTO = false;
+const preferredKey = () => ($('accel').value === 'webgpu' && navigator.gpu ? 'gpu' : $('accel').value === 'auto' && GPU_AUTO && navigator.gpu && !gpuLostBefore() ? 'gpu' : 'cpu');
 fetchModel(preferredKey()).catch(() => {});
 
 // ---------- preview ----------
@@ -257,7 +260,8 @@ async function ensureLiteRt() {
 async function getModel(want, onlyCpu = false) {
   await ensureLiteRt();
   if (!manifest) { try { await fetchModel(preferredKey()); } catch {} }
-  let gpuOk = !onlyCpu && want !== 'wasm' && !!navigator.gpu;
+  let gpuOk = !onlyCpu && !!navigator.gpu && (want === 'webgpu' || (want === 'auto' && GPU_AUTO));
+  if (want === 'webgpu' && !files.model) L.warn('GPU mode is experimental: on WebGPU the built-in model currently ignores the audio, so the mouth may not move.');
   if (gpuOk && want === 'auto' && gpuLostBefore()) {
     L.warn('WebGPU crashed on this device in an earlier run, so Auto starts on CPU. Choose "GPU · WebGPU" in Settings to try the GPU again.');
     gpuOk = false;
