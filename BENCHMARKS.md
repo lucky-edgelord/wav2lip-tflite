@@ -47,11 +47,27 @@ Same clip, batch 8 FP32 model, headless Chrome 153 on the same CPU-only machine:
 
 | backend | throughput | Wav2Lip | detect | other |
 |---|---:|---:|---:|---:|
-| CPU (Wasm) | 3.1 fps | 245 ms/frame | 68 ms/frame* | 8 ms/frame |
-| WebGPU via SwiftShader (software) | 0.4 fps | 2429 ms/frame | 228 ms/frame* | 11 ms/frame |
+| CPU (Wasm), FP32 | 3.1 fps | 245 ms/frame | 68 ms/frame* | 8 ms/frame |
+| CPU (Wasm), full INT8 | 6.4 fps | **72 ms/frame** | 73 ms/frame* | 10 ms/frame |
+| WebGPU via SwiftShader (software), FP32 | 0.4 fps | 2429 ms/frame | 228 ms/frame* | 11 ms/frame |
+| WebGPU via SwiftShader (software), INT8 weights | 0.1 fps | 6959 ms/frame | 242 ms/frame* | 13 ms/frame |
 
 \* MediaPipe ran its "GPU" delegate on software WebGL here; on real hardware detection is a few ms.
 Wasm is ~2.7× slower than native XNNPACK on the same machine. These are floor numbers; measure on a real GPU.
+
+## INT8 on an unseen face
+
+Calibrating on one clip fits the INT8 input ranges to it (pixels clipped at 0.88, audio at 0).
+With `--augment-calib` (brightness and loudness variants) the ranges cover pixels 0–0.99 and audio
+−3.95 to 3.05. Tested on a different face (astronaut portrait + the same speech), batch 8, CPU:
+
+| model | max abs error | PSNR vs PyTorch | ms / frame |
+|---|---:|---:|---:|
+| `int8w` | 0.080 | 49.1 dB | 92.8 |
+| `int8`, calibrated on one clip | 0.374 | 35.3 dB | 22.1 |
+| `int8`, augmented calibration | 0.151 | 34.5 dB | 16.7 |
+
+Full INT8 shows faint grain on unseen faces; `int8w` is visually identical to FP32.
 
 ## Conversion facts
 

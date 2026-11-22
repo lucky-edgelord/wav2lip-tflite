@@ -1,0 +1,84 @@
+{
+  "gpu": {
+    "file": "wav2lip_gan_b8_int8w.tflite",
+    "precision": "int8w",
+    "batch": 8,
+    "bytes": 36556320,
+    "io": {
+      "args_0": {
+        "dtype": "float32",
+        "shape": [
+          8,
+          80,
+          16,
+          1
+        ],
+        "scale": 0.0,
+        "zero_point": 0
+      },
+      "args_1": {
+        "dtype": "float32",
+        "shape": [
+          8,
+          96,
+          96,
+          6
+        ],
+        "scale": 0.0,
+        "zero_point": 0
+      },
+      "output_0": {
+        "dtype": "float32",
+        "shape": [
+          8,
+          96,
+          96,
+          3
+        ],
+        "scale": 0.0,
+        "zero_point": 0
+      }
+    }
+  },
+  "cpu": {
+    "file": "wav2lip_gan_b8_int8.tflite",
+    "precision": "int8",
+    "batch": 8,
+    "bytes": 36685152,
+    "io": {
+      "args_0": {
+        "dtype": "int8",
+        "shape": [
+          8,
+          80,
+          16,
+          1
+        ],
+        "scale": 0.027447931468486786,
+        "zero_point": 16
+      },
+      "args_1": {
+        "dtype": "int8",
+        "shape": [
+          8,
+          96,
+          96,
+          6
+        ],
+        "scale": 0.0039010837208479643,
+        "zero_point": -128
+      },
+      "output_0": {
+        "dtype": "int8",
+        "shape": [
+          8,
+          96,
+          96,
+          3
+        ],
+        "scale": 0.00390625,
+        "zero_point": -128
+      }
+    }
+  }
+}

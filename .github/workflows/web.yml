@@ -1,10 +1,13 @@
 # Builds web/ and publishes it to GitHub Pages.
 # One-time setup: Settings -> Pages -> Source: "GitHub Actions". Then run this
-# workflow from the Actions tab (or push changes under web/ once it is enabled).
+# workflow from the Actions tab; after that it also runs on pushes that touch web/.
 name: Deploy web
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/web.yml']
 
 permissions:
   contents: read

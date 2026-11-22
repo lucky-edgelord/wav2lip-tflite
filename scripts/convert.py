@@ -39,7 +39,7 @@ def export_float(model, batch, path):
     print(f"wrote {path}")
 
 
-def calibration_set(calib_npz, batch, steps):
+def calibration_set(calib_npz, batch, steps, augment=False):
     """Real samples (from infer.py --dump-calib) give far better INT8 than noise."""
     if calib_npz:
         data = np.load(calib_npz)
@@ -50,6 +50,15 @@ def calibration_set(calib_npz, batch, steps):
         n = steps * batch
         mels = rng.uniform(-4, 4, (n, 80, 16, 1)).astype(np.float32)
         faces = rng.uniform(0, 1, (n, 96, 96, 6)).astype(np.float32)
+    if augment:
+        # Widen the calibrated ranges beyond one clip: brighter faces/teeth and
+        # louder audio would otherwise clip at the INT8 input/activation limits.
+        rng = np.random.default_rng(0)
+        lift = rng.uniform(0, 1, (len(faces), 1, 1, 1)).astype(np.float32)
+        mels = np.concatenate([mels, np.clip(mels + 1.5, -4, 4), np.clip(mels * 1.6, -4, 4)])
+        faces = np.concatenate([faces, np.clip(faces * 1.15, 0, 1), np.clip(faces * 0.8 + 0.2 * lift, 0, 1)])
+        order = rng.permutation(len(mels))
+        mels, faces = mels[order], faces[order]
     usable = min(len(mels), steps * batch) // batch * batch
     if usable == 0:
         raise SystemExit(f"need at least {batch} calibration samples")
@@ -79,6 +88,8 @@ def main():
                     choices=["fp32", "int8w", "int8"])
     ap.add_argument("--calib", help="npz from infer.py --dump-calib (for --precision int8)")
     ap.add_argument("--calib-steps", type=int, default=64)
+    ap.add_argument("--augment-calib", action="store_true",
+                    help="add brightness/loudness variants so INT8 generalises beyond the calibration clip")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -100,7 +111,7 @@ def main():
         if p == "fp32":
             continue
         if p == "int8" and calib is None:
-            calib = calibration_set(args.calib, args.batch, args.calib_steps)
+            calib = calibration_set(args.calib, args.batch, args.calib_steps, args.augment_calib)
         quantize(float_path, f"{base}_{p}.tflite", p, calib)
 
     if not keep_float:  # only an intermediate for this run

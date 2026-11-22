@@ -12,6 +12,7 @@ const IMG = 96;
 const $ = (id) => document.getElementById(id);
 const base = (p) => new URL(p, location.href).href;
 const files = { face: null, audio: null, model: null };
+let manifest = null; const modelBytes = {}; // 'gpu' | 'cpu' | 'custom' -> Uint8Array
 let running = false, cancelled = false, resultBlob = null, liteRtReady = null, detector = null, detectorTs = 0;
 
 // ---------- file pickers (click or drop) ----------
@@ -22,8 +23,8 @@ function setFile(kind, file, note) {
   row.classList.toggle('has', !!file);
   row.querySelector('.name').textContent = file ? `${file.name} · ${fmtSize(file.size)}${note ? ` · ${note}` : ''}` : row.dataset.empty;
   if (kind === 'face' && file) showPoster(file);
-  if (kind === 'model' && file && $('remember').checked) saveModel(file);
-  $('run').disabled = !(files.face && files.audio && files.model) || running;
+  if (kind === 'model') delete modelBytes.custom;
+  $('run').disabled = !(files.face && files.audio) || running;
 }
 for (const row of document.querySelectorAll('.pick')) {
   const input = row.querySelector('input');
@@ -37,27 +38,32 @@ for (const row of document.querySelectorAll('.pick')) {
   });
 }
 
-// ---------- remember the model in this browser (IndexedDB, best effort) ----------
-function idb() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open('wav2lip-web', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('files');
-    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-  });
+// ---------- bundled INT8 models, fetched from this site with progress ----------
+async function fetchModel(key) {
+  if (modelBytes[key]) return modelBytes[key];
+  manifest ??= await (await fetch(base('./assets/models.json'))).json();
+  const entry = manifest[key];
+  const res = await fetch(base(`./assets/${entry.file}`));
+  if (!res.ok) throw new Error(`Could not download the model (${res.status}).`);
+  const total = +res.headers.get('content-length') || entry.bytes;
+  const reader = res.body.getReader(), buf = new Uint8Array(total);
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf.set(value, got); got += value.length;
+    modelState(`${entry.precision === 'int8' ? 'INT8' : 'INT8 weights'} · ${fmtSize(total)} · ${Math.round((got / total) * 100)}%`, key);
+  }
+  modelBytes[key] = buf;
+  modelState(`${entry.precision === 'int8' ? 'INT8' : 'INT8 weights'} · ${fmtSize(total)} · ready`, key, true);
+  return buf;
 }
-async function saveModel(file) {
-  try { const db = await idb(); db.transaction('files', 'readwrite').objectStore('files').put({ name: file.name, blob: file }, 'model'); } catch {}
+function modelState(text, key, ready) {
+  $('model-state').textContent = `${key === 'gpu' ? 'GPU' : 'CPU'} model: ${text}`;
+  $('model-state').classList.toggle('ok', !!ready);
 }
-(async () => {
-  try {
-    const db = await idb();
-    const req = db.transaction('files').objectStore('files').get('model');
-    req.onsuccess = () => {
-      const v = req.result;
-      if (v && !files.model) setFile('model', new File([v.blob], v.name), 'saved in this browser');
-    };
-  } catch {}
-})();
+const preferredKey = () => ($('accel').value === 'wasm' || !navigator.gpu ? 'cpu' : 'gpu');
+fetchModel(preferredKey()).catch((e) => modelState(`unavailable (${e.message})`, preferredKey()));
 
 // ---------- preview ----------
 const stage = $('stage'), view = $('view'), vctx = view.getContext('2d');
@@ -76,6 +82,7 @@ async function showPoster(file) {
   } catch (e) { status(`Could not read that file: ${e.message}`); }
 }
 function status(msg) { $('status').textContent = msg; }
+function hud(msg) { $('hud-r').textContent = msg; }
 function progress(f) { $('bar').style.width = `${Math.round(f * 100)}%`; }
 
 // ---------- runtime setup ----------
@@ -94,24 +101,45 @@ async function getDetector() {
   }
 }
 
-async function getModel(file, want) {
+async function compile(bytes, accelerator) {
+  const model = await loadAndCompile(bytes, { accelerator });
+  const ins = model.getInputDetails();
+  const mel = ins.find((d) => d.shape.length === 4 && d.shape[1] === 80 && d.shape[2] === 16);
+  const face = ins.find((d) => d.shape.length === 4 && d.shape[3] === 6);
+  if (!mel || !face) throw new Error('This does not look like a channels-last Wav2Lip model from scripts/convert.py.');
+  return { model, accelerator, batch: mel.shape[0], melIndex: mel.index, faceIndex: face.index, int8: mel.dtype === 'int8' };
+}
+
+async function getModel(want) {
   liteRtReady ??= loadLiteRt(base('./litert/'));
   await liteRtReady;
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const order = want === 'auto' ? (navigator.gpu ? ['webgpu', 'wasm'] : ['wasm']) : want === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+  if (files.model) { // user's own model: float I/O only (no quantization params available)
+    modelBytes.custom ??= new Uint8Array(await files.model.arrayBuffer());
+    for (const acc of want === 'wasm' || !navigator.gpu ? ['wasm'] : ['webgpu', 'wasm']) {
+      try {
+        const m = await compile(modelBytes.custom, acc);
+        if (m.int8) throw new Error('Custom full-INT8 models are not supported; use fp32 or int8w.');
+        return m;
+      } catch (e) { if (acc === 'wasm' || e.message.includes('INT8') || e.message.includes('Wav2Lip')) throw e; }
+    }
+  }
+  const tries = want === 'wasm' || !navigator.gpu ? [['cpu', 'wasm']] : [['gpu', 'webgpu'], ['cpu', 'wasm']];
   let lastErr;
-  for (const accelerator of order) {
+  for (const [key, acc] of tries) {
     try {
-      const model = await loadAndCompile(bytes, { accelerator });
-      const ins = model.getInputDetails();
-      const mel = ins.find((d) => d.shape.length === 4 && d.shape[1] === 80 && d.shape[2] === 16);
-      const face = ins.find((d) => d.shape.length === 4 && d.shape[3] === 6);
-      if (!mel || !face) throw new Error('This does not look like a channels-last Wav2Lip model from scripts/convert.py.');
-      if (mel.dtype !== 'float32') throw new Error('Full INT8 models are not supported here. Use the fp32 or int8w file.');
-      return { model, accelerator, batch: mel.shape[0], melIndex: mel.index, faceIndex: face.index };
-    } catch (e) { lastErr = e; if (e.message.includes('Wav2Lip') || e.message.includes('INT8')) throw e; }
+      const m = await compile(await fetchModel(key), acc);
+      if (m.int8) m.q = manifest[key].io;
+      m.label = key === 'gpu' ? 'INT8 weights' : 'full INT8';
+      return m;
+    } catch (e) { lastErr = e; status(`GPU path unavailable (${e.message}); switching to CPU…`); }
   }
   throw lastErr;
+}
+
+function quantize(src, p) {
+  const out = new Int8Array(src.length), inv = 1 / p.scale;
+  for (let i = 0; i < src.length; i++) out[i] = Math.max(-128, Math.min(127, Math.round(src[i] * inv) + p.zero_point));
+  return out;
 }
 
 async function decodeAudio(file) {
@@ -175,13 +203,13 @@ function boxer(padBottom, smooth) {
 async function run() {
   running = true; cancelled = false; resultBlob = null;
   $('run').disabled = true; $('cancel').hidden = false; $('save').hidden = true; $('result').hidden = true; view.hidden = false;
-  stage.classList.add('ready', 'busy'); progress(0);
+  stage.classList.add('ready', 'busy'); progress(0); hud('SYNCING');
   const t = { detect: 0, model: 0, other: 0 };
   try {
     status('Loading face detector…');
     await getDetector();
     status('Loading Wav2Lip model…');
-    const m = await getModel(files.model, $('accel').value);
+    const m = await getModel($('accel').value);
     status('Decoding audio…');
     const { audio, mono16k } = await decodeAudio(files.audio);
     const mel = await melspectrogram(mono16k, (f) => status(`Computing mel spectrogram… ${Math.round(f * 100)}%`));
@@ -189,9 +217,10 @@ async function run() {
     const fps = +$('fps').value || (src.fps ? Math.round(src.fps * 100) / 100 : 25);
     const starts = melChunkStarts(mel.frames, fps);
     const n = starts.length, B = m.batch;
-    $('acc').textContent = `${m.accelerator === 'webgpu' ? 'WebGPU' : 'CPU (Wasm)'} · batch ${B} · detector ${detector.delegateName}`;
+    $('acc').textContent = `Wav2Lip ${m.label} on ${m.accelerator === 'webgpu' ? 'WebGPU' : 'CPU'} · batch ${B} · face detector on ${detector.delegateName}`;
 
     view.width = src.w; view.height = src.h;
+    hud(`${src.w}×${src.h} · ${fps} FPS`);
     const vcodec = await getFirstEncodableVideoCodec(['avc', 'vp9', 'av1'], { width: src.w, height: src.h });
     const acodec = await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: audio.numberOfChannels, sampleRate: audio.sampleRate });
     if (!vcodec) throw new Error('This browser cannot encode video (WebCodecs). Try Chrome or Edge.');
@@ -239,12 +268,14 @@ async function run() {
       if (k) {
         const s = performance.now();
         const inputs = [];
-        inputs[m.melIndex] = new Tensor(melBuf, [B, 80, 16, 1]);
-        inputs[m.faceIndex] = new Tensor(faceBuf, [B, IMG, IMG, 6]);
+        inputs[m.melIndex] = new Tensor(m.int8 ? quantize(melBuf, m.q.args_0) : melBuf, [B, 80, 16, 1]);
+        inputs[m.faceIndex] = new Tensor(m.int8 ? quantize(faceBuf, m.q.args_1) : faceBuf, [B, IMG, IMG, 6]);
         const moved = m.accelerator === 'webgpu' ? await Promise.all(inputs.map((x) => x.moveTo('webgpu'))) : inputs;
         const outs = await m.model.run(moved);
         const host = await outs[0].moveTo('wasm');
-        const pred = host.toTypedArray().slice();
+        const raw = host.toTypedArray();
+        let pred = raw.slice();
+        if (m.int8) { const p = m.q.output_0; pred = Float32Array.from(raw, (v) => (v - p.zero_point) * p.scale); }
         host.delete(); moved.forEach((x) => x.delete()); outs.slice(1).forEach((x) => x.delete());
         t.model += performance.now() - s;
 
@@ -296,7 +327,8 @@ async function run() {
     status(`Error: ${e.message || e}`);
   } finally {
     running = false; stage.classList.remove('busy');
-    $('cancel').hidden = true; $('run').disabled = !(files.face && files.audio && files.model);
+    if (resultBlob) hud('SYNCED');
+    $('cancel').hidden = true; $('run').disabled = !(files.face && files.audio);
   }
 }
 
@@ -317,4 +349,7 @@ async function save() {
 $('run').addEventListener('click', run);
 $('cancel').addEventListener('click', () => { cancelled = true; status('Cancelling…'); });
 $('save').addEventListener('click', save);
-$('webgpu-note').textContent = navigator.gpu ? 'WebGPU available' : 'No WebGPU in this browser: will run on CPU';
+$('webgpu-note').textContent = navigator.gpu ? 'WebGPU online' : 'No WebGPU · CPU mode';
+$('webgpu-note').classList.toggle('ok', !!navigator.gpu);
+$('accel').addEventListener('change', () => fetchModel(preferredKey()).catch(() => {}));
+$('clear-model').addEventListener('click', (e) => { e.preventDefault(); setFile('model', null); });

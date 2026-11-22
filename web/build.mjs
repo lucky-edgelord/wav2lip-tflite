@@ -10,6 +10,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(`${out}/litert`, { recursive: true });
 mkdirSync(`${out}/mediapipe`, { recursive: true });
 mkdirSync(`${out}/models`, { recursive: true });
+mkdirSync(`${out}/assets`, { recursive: true });
 
 await build({
   entryPoints: ['src/app.js'], bundle: true, format: 'esm', minify: true,
@@ -30,4 +31,6 @@ if (!existsSync(face)) {
     (r) => (r.statusCode === 200 ? r.pipe(createWriteStream(face)).on('finish', res) : rej(new Error(`HTTP ${r.statusCode}`)))).on('error', rej));
 }
 cpSync(face, `${out}/${face}`);
+// INT8 Wav2Lip models + quantization manifest (made by scripts/export_web_models.py)
+cpSync('assets', `${out}/assets`, { recursive: true });
 console.log(`built ${out}/`);

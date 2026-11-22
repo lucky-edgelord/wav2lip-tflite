@@ -10,3 +10,6 @@ models/
 *.mp4
 *.avi
 *.wav
+
+# web demo models are committed on purpose
+!web/assets/*.tflite
