@@ -13,3 +13,4 @@ models/
 
 # web demo models are committed on purpose
 !web/assets/*.tflite
+!android/app/src/main/assets/*.tflite
