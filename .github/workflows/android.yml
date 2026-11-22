@@ -1,0 +1,40 @@
+# Builds the Android accelerator bench and publishes the APK as a GitHub release.
+name: Android bench
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - name: Build APK
+        working-directory: android
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../wav2lip-bench.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wav2lip-bench-apk
+          path: wav2lip-bench.apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="bench-${{ github.run_number }}"
+          gh release create "$tag" wav2lip-bench.apk --prerelease \
+            --title "Wav2Lip accelerator bench #${{ github.run_number }}" \
+            --notes "Android benchmark APK built from ${{ github.sha }}. See android/README.md."

@@ -76,6 +76,12 @@ Tuning:
 `web/` runs the same pipeline in the browser with LiteRT.js (WebGPU) and MediaPipe: upload a face video,
 driving audio and the converted model, get an MP4 back. See [web/README.md](web/README.md).
 
+## Android accelerator bench
+
+`android/` is a small APK that benchmarks the INT8 model on CPU, NNAPI, the LiteRT GPU delegate and
+Qualcomm QNN (DSP/GPU), and checks each output still follows the audio. Download it from the
+repo's Releases. See [android/README.md](android/README.md).
+
 ## How the conversion works
 
 - `w2l/model.py` re-implements the Wav2Lip generator with the original module names so checkpoints load directly.
