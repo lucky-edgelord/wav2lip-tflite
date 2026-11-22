@@ -1,45 +1,4 @@
 {
-  "gpu": {
-    "file": "wav2lip_gan_b1_int8w.tflite",
-    "precision": "int8w",
-    "batch": 1,
-    "bytes": 36556320,
-    "io": {
-      "args_0": {
-        "dtype": "float32",
-        "shape": [
-          1,
-          80,
-          16,
-          1
-        ],
-        "scale": 0.0,
-        "zero_point": 0
-      },
-      "args_1": {
-        "dtype": "float32",
-        "shape": [
-          1,
-          96,
-          96,
-          6
-        ],
-        "scale": 0.0,
-        "zero_point": 0
-      },
-      "output_0": {
-        "dtype": "float32",
-        "shape": [
-          1,
-          96,
-          96,
-          3
-        ],
-        "scale": 0.0,
-        "zero_point": 0
-      }
-    }
-  },
   "cpu": {
     "file": "wav2lip_gan_b8_int8.tflite",
     "precision": "int8",

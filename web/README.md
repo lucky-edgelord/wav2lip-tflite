@@ -5,36 +5,22 @@
 Wav2Lip lip-sync that runs entirely in the browser: pick a face video (or photo) and a driving
 audio track, and it renders an MP4 locally. Nothing is uploaded.
 
-The INT8 Wav2Lip models ship with the site (`assets/`, ~37 MB each) and load automatically:
+The full-INT8 Wav2Lip model ships with the site (`assets/`, ~37 MB) and loads automatically. It runs
+on the CPU through LiteRT.js (XNNPACK), multithreaded: up to 4 threads on phones, 8 on desktops.
+On an Android phone (Adreno 6xx, 4 GB) that is ~330 ms/frame with 4 threads vs ~1060 ms single-threaded.
 
-| device | model | why |
-|---|---|---|
-| WebGPU available | `wav2lip_gan_b1_int8w.tflite`: INT8 weights, float I/O, batch 1 | WebGPU expands weights to float; 49 dB vs PyTorch on an unseen face |
-| CPU only, or after a GPU failure | `wav2lip_gan_b8_int8.tflite`: full INT8, int8 I/O, batch 8, multithreaded | 3.4× faster than FP32 in Wasm; 35 dB on an unseen face (faint grain) |
+Multithreading needs cross-origin isolation. GitHub Pages cannot send the headers, so `coi-sw.js`
+(a 20-line service worker) adds them; the page reloads itself once on the first visit.
 
-The full-INT8 model's input/output scales live in `assets/models.json` because LiteRT.js does not
-expose quantization parameters. Rebuild both with
-`python scripts/export_web_models.py --checkpoint checkpoints/wav2lip_gan.pth --calib calib.npz`
-(calibration uses `--augment-calib` so brighter faces and louder audio do not clip).
+**WebGPU was dropped.** LiteRT.js on WebGPU ran the model but its output ignored the audio (the
+mouth never opened), on an Adreno 6xx phone and on SwiftShader, at fp16 and fp32 alike. The audio
+encoder itself matched exactly on WebGPU, so the fault is later in the graph. GPU/NPU work moves to
+the native Android app.
+
+The model's input/output scales live in `assets/models.json` (LiteRT.js does not expose
+quantization parameters). Rebuild with
+`python scripts/export_web_models.py --checkpoint checkpoints/wav2lip_gan.pth --calib calib.npz`.
 You can still load your own fp32/int8w model under Settings.
-
-- **Wav2Lip**: [LiteRT.js](https://www.npmjs.com/package/@litertjs/core) on WebGPU, with a CPU (Wasm) fallback
-- **Face boxes**: MediaPipe Tasks Vision `FaceDetector` (BlazeFace short-range), same padding/smoothing as `w2l/face.py`
-- **Audio features**: `src/mel.js`, a port of `w2l/audio.py` (matches librosa to 2e-5)
-- **Video in/out**: [Mediabunny](https://mediabunny.dev) on WebCodecs (H.264 + AAC/Opus MP4)
-
-### Phones
-
-Tested on an Android phone (Adreno 6xx, 4 GB RAM, Chrome 157). With a batch-8 GPU model the GPU
-driver reset after the first batch (`VK_ERROR_DEVICE_LOST`), so the GPU model is now batch 1 (8×
-smaller submissions). If WebGPU still fails, the run switches to CPU mid-video and redoes those
-frames, and **Auto** remembers it and starts on CPU next time on that device (pick *GPU · WebGPU*
-in Settings to try again).
-
-CPU inference is multithreaded when the page is cross-origin isolated. GitHub Pages cannot send the
-needed headers, so `coi-sw.js` (a 20-line service worker) adds them; the page reloads itself once on
-the first visit. On that phone single-threaded full INT8 ran at ~1.06 s/frame; with 2 threads on a
-2-core test machine Wav2Lip went from 72 to 45 ms/frame.
 
 ## Log console
 
@@ -45,8 +31,8 @@ details with stack traces. It opens by itself on an error. **Copy** or **Save .t
 
 Failure handling: model download retries (3×, 15 s stall watchdog) and is cached on the device;
 picked files are read into memory immediately; audio falls back from Web Audio to WebCodecs;
-the face detector falls back from GPU to CPU and restarts if it fails mid-run; Wav2Lip falls back
-from WebGPU to CPU at load or mid-run; the screen is kept awake while rendering.
+the face detector falls back from GPU to CPU and restarts if it fails mid-run; the screen is kept
+awake while rendering.
 
 ## Run locally
 

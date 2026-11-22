@@ -65,7 +65,16 @@ Same clip + 8.5 s speech, 209 frames, build `ea71260` (before threads and batch-
 | WebGPU, INT8 weights, batch 8 | ~373 ms/frame (first batch incl. warm-up) | then `VK_ERROR_DEVICE_LOST` on batch 2 |
 | CPU fallback, full INT8, 1 thread | ~1060 ms/frame | finished all frames; 0.8 fps overall |
 
-Face detection (MediaPipe GPU) ~25–30 ms/frame. Fixes since: batch-1 GPU model, multithreaded CPU.
+Face detection (MediaPipe GPU) ~25–30 ms/frame.
+
+After the fixes (same phone, same clip):
+
+| path | Wav2Lip | overall |
+|---|---:|---:|
+| CPU, full INT8, 4 threads | **~330 ms/frame** | 2.5 fps |
+| WebGPU, INT8 weights, batch 1 | ~580 ms/frame | 1.4 fps, but output ignores the audio (mouth stays closed) |
+
+WebGPU was removed from the web app because of the audio bug; see web/README.md.
 
 ## INT8 on an unseen face
 

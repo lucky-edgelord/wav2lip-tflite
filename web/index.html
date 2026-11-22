@@ -139,7 +139,7 @@ footer a{color:var(--cyan)}
       <p>Drop a face and a voice. The rig finds the face, re-synthesises the mouth with an INT8 Wav2Lip model and renders an MP4, all on your own hardware.</p>
     </div>
     <div class="sys">
-      <span class="chip" id="webgpu-note">Probing GPU…</span>
+      <span class="chip" id="cpu-note">CPU</span>
       <span class="chip" id="model-state">Model: loading…</span>
     </div>
   </header>
@@ -209,9 +209,6 @@ footer a{color:var(--cyan)}
       <details>
         <summary>Settings</summary>
         <div class="grid">
-          <label class="f">Run Wav2Lip on
-            <select id="accel"><option value="auto">Auto (CPU, multithreaded)</option><option value="webgpu">GPU · WebGPU (experimental)</option><option value="wasm">CPU</option></select>
-          </label>
           <label class="f">Output fps (blank = source)
             <input id="fps" type="number" min="1" max="60" step="1" placeholder="auto" inputmode="numeric">
           </label>
@@ -234,7 +231,7 @@ footer a{color:var(--cyan)}
         </label>
         <p class="hint"><a href="#" id="clear-model">Use the built-in INT8 model again</a></p>
       </details>
-      <p class="hint">Runs a full-INT8 Wav2Lip on your CPU with up to 4 threads on phones (about 37 MB, downloaded once). GPU mode is experimental: WebGPU currently ignores the audio, so the mouth may not move.</p>
+      <p class="hint">Runs a full-INT8 Wav2Lip on your CPU, multithreaded (up to 4 threads on phones). The model is about 37 MB and downloaded once.</p>
     </section>
   </main>
 </div>

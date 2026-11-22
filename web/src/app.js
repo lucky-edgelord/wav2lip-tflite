@@ -2,7 +2,7 @@
 // WebGPU or CPU) -> paste back -> MP4 via WebCodecs (Mediabunny). Mirrors infer.py.
 // Every step logs to the in-page console (src/log.js); open it with the Log button.
 import { L, envReport, mountLogUI, memory, openDrawer } from './log.js';
-import { loadLiteRt, loadAndCompile, Tensor, getWebGpuDevice, supportsFeature } from '@litertjs/core';
+import { loadLiteRt, loadAndCompile, Tensor, supportsFeature } from '@litertjs/core';
 import { FilesetResolver, FaceDetector } from '@mediapipe/tasks-vision';
 import {
   Input, ALL_FORMATS, BlobSource, CanvasSink, AudioBufferSink, Output, Mp4OutputFormat, BufferTarget,
@@ -16,8 +16,7 @@ const IMG = 96;
 const $ = (id) => document.getElementById(id);
 const base = (p) => new URL(p, location.href).href;
 const files = { face: null, audio: null, model: null };
-let manifest = null; const modelBytes = {}; // 'gpu' | 'cpu' | 'custom' -> Uint8Array
-const SIMULATE_GPU_LOSS = new URLSearchParams(location.search).get('simulate') === 'gpu-loss'; // test hook
+let manifest = null; const modelBytes = {}; // 'cpu' | 'custom' -> Uint8Array
 let cpuThreads = 1;
 let running = false, cancelled = false, resultBlob = null, liteRtReady = null, detector = null, detectorTs = 0, fileset = null;
 
@@ -158,14 +157,10 @@ function dl({ label, url, got, total, done, error, cached, note }) {
   $('model-state').textContent = done ? `${label}: ready` : `${label}: ${Math.floor(pct)}%`;
   $('model-state').classList.toggle('ok', !!done);
 }
-// If WebGPU crashed on this device with this model, Auto mode starts on CPU next time.
-const gpuLostKey = () => `w2l-gpu-lost:${manifest?.gpu?.file || 'gpu'}`;
-const gpuLostBefore = () => { try { return !!localStorage.getItem(gpuLostKey()); } catch { return false; } };
-const rememberGpuLost = (why) => { try { localStorage.setItem(gpuLostKey(), `${new Date().toISOString()} ${why}`); } catch {} };
-// Auto uses the CPU: LiteRT.js WebGPU currently runs this model but ignores the audio input
-// (mouth stays closed), verified on Adreno 6xx and SwiftShader. GPU is opt-in until fixed.
-const GPU_AUTO = false;
-const preferredKey = () => ($('accel').value === 'webgpu' && navigator.gpu ? 'gpu' : $('accel').value === 'auto' && GPU_AUTO && navigator.gpu && !gpuLostBefore() ? 'gpu' : 'cpu');
+// The web version runs Wav2Lip on the CPU only (multithreaded full INT8). WebGPU was dropped:
+// LiteRT.js WebGPU ran the model but ignored the audio input (mouth stayed closed) on an
+// Adreno 6xx phone and on SwiftShader. The Android app (android/) covers GPU/NPU instead.
+const preferredKey = () => 'cpu';
 fetchModel(preferredKey()).catch(() => {});
 
 // ---------- preview ----------
@@ -224,13 +219,6 @@ async function compile(bytes, accelerator) {
   const mel = ins.find((d) => d.shape.length === 4 && d.shape[1] === 80 && d.shape[2] === 16);
   const face = ins.find((d) => d.shape.length === 4 && d.shape[3] === 6);
   if (!mel || !face) throw new Error('This does not look like a channels-last Wav2Lip model from scripts/convert.py.');
-  if (accelerator === 'webgpu') {
-    try {
-      const dev = await getWebGpuDevice?.();
-      dev?.lost?.then((info) => L.error('WebGPU device lost:', { reason: info.reason, message: info.message }));
-      dev?.addEventListener?.('uncapturederror', (ev) => L.error('WebGPU error:', ev.error?.message || ev.error));
-    } catch (e) { L.debug('Could not attach WebGPU device listeners:', e); }
-  }
   return { model, accelerator, batch: mel.shape[0], melIndex: mel.index, faceIndex: face.index, int8: mel.dtype === 'int8' };
 }
 
@@ -257,45 +245,20 @@ async function ensureLiteRt() {
   try { await liteRtReady; } catch (e) { liteRtReady = null; throw e; }
 }
 
-async function getModel(want, onlyCpu = false) {
+async function getModel() {
   await ensureLiteRt();
-  if (!manifest) { try { await fetchModel(preferredKey()); } catch {} }
-  let gpuOk = !onlyCpu && !!navigator.gpu && (want === 'webgpu' || (want === 'auto' && GPU_AUTO));
-  if (want === 'webgpu' && !files.model) L.warn('GPU mode is experimental: on WebGPU the built-in model currently ignores the audio, so the mouth may not move.');
-  if (gpuOk && want === 'auto' && gpuLostBefore()) {
-    L.warn('WebGPU crashed on this device in an earlier run, so Auto starts on CPU. Choose "GPU · WebGPU" in Settings to try the GPU again.');
-    gpuOk = false;
-  }
-  if (want === 'webgpu') { try { localStorage.removeItem(gpuLostKey()); } catch {} }
   if (files.model) { // user's own model: float I/O only (no quantization params available)
     modelBytes.custom ??= new Uint8Array(await files.model.arrayBuffer());
-    for (const acc of gpuOk ? ['webgpu', 'wasm'] : ['wasm']) {
-      try {
-        const m = await compile(modelBytes.custom, acc);
-        if (m.int8) throw new Error('Custom full-INT8 models are not supported; use fp32 or int8w.');
-        m.label = 'your model';
-        return m;
-      } catch (e) {
-        if (acc === 'wasm' || e.message.includes('INT8') || e.message.includes('Wav2Lip')) throw e;
-        L.warn('Your model failed on WebGPU, trying CPU.');
-      }
-    }
+    const m = await compile(modelBytes.custom, 'wasm');
+    if (m.int8) throw new Error('Custom full-INT8 models are not supported; use fp32 or int8w.');
+    m.label = 'your model';
+    return m;
   }
-  const tries = gpuOk ? [['gpu', 'webgpu'], ['cpu', 'wasm']] : [['cpu', 'wasm']];
-  let lastErr;
-  for (const [key, acc] of tries) {
-    try {
-      const m = await compile(await fetchModel(key), acc);
-      if (m.int8) m.q = manifest[key].io;
-      m.label = key === 'gpu' ? 'INT8 weights' : 'full INT8';
-      L.info(`Wav2Lip ready: ${m.label} on ${acc}, batch ${m.batch}${m.int8 ? ', int8 I/O' : ''}`);
-      return m;
-    } catch (e) {
-      lastErr = e;
-      if (acc === 'webgpu') { L.warn('WebGPU path failed, switching to CPU:', e); status('GPU path unavailable, switching to CPU…'); }
-    }
-  }
-  throw lastErr;
+  const m = await compile(await fetchModel('cpu'), 'wasm');
+  if (m.int8) m.q = manifest.cpu.io;
+  m.label = 'full INT8';
+  L.info(`Wav2Lip ready: ${m.label} on CPU, batch ${m.batch}${m.int8 ? ', int8 I/O' : ''}`);
+  return m;
 }
 
 function quantize(src, p) {
@@ -406,40 +369,23 @@ function boxer(padBottom, smooth, stats) {
   };
 }
 
-// ---------- Wav2Lip on one batch, with GPU -> CPU fallback ----------
+// ---------- Wav2Lip on one batch ----------
 async function infer(state, melBuf, faceBuf) {
-  for (;;) {
-    const m = state.m, B = m.batch;
-    let live = []; // tensors to free whatever happens
-    try {
-      const inputs = [];
-      inputs[m.melIndex] = new Tensor(m.int8 ? quantize(melBuf, m.q.args_0) : melBuf, [B, 80, 16, 1]);
-      inputs[m.faceIndex] = new Tensor(m.int8 ? quantize(faceBuf, m.q.args_1) : faceBuf, [B, IMG, IMG, 6]);
-      live = [...inputs];
-      // moveTo() hands the data to the GPU and invalidates the CPU tensor.
-      const moved = m.accelerator === 'webgpu' ? await Promise.all(inputs.map((x) => x.moveTo('webgpu'))) : inputs;
-      live = [...moved];
-      if (SIMULATE_GPU_LOSS && m.accelerator === 'webgpu' && ++state.gpuCalls >= 2) throw new Error('simulated WebGPU device loss (?simulate=gpu-loss)');
-      const outs = await m.model.run(moved);
-      const host = await outs[0].moveTo('wasm');
-      const raw = host.toTypedArray();
-      let pred;
-      if (m.int8) { const p = m.q.output_0; pred = Float32Array.from(raw, (v) => (v - p.zero_point) * p.scale); }
-      else pred = raw.slice();
-      host.delete(); outs.slice(1).forEach((x) => x.delete());
-      if (!state.checked) { state.checked = true; let s = 0; for (let i = 0; i < pred.length; i += 97) s += pred[i]; if (!Number.isFinite(s)) throw new Error('model produced NaN/Inf output'); }
-      return pred;
-    } catch (e) {
-      if (state.m.accelerator !== 'webgpu' || state.fellBack) throw e;
-      L.error('Wav2Lip failed on WebGPU; switching to CPU and redoing these frames:', e);
-      if (!files.model) rememberGpuLost(e.message);
-      status('GPU failed, continuing on CPU…');
-      state.fellBack = true;
-      state.m = await getModel('wasm', true);
-      $('acc').textContent = `Wav2Lip ${state.m.label} on CPU (GPU failed) · batch ${state.m.batch} · ${cpuThreads} thread(s)`;
-      return null; // model (and maybe batch size) changed: caller re-chunks
-    } finally { for (const x of live) { try { x?.delete(); } catch {} } }
-  }
+  const m = state.m, B = m.batch, live = [];
+  try {
+    const inputs = [];
+    inputs[m.melIndex] = new Tensor(m.int8 ? quantize(melBuf, m.q.args_0) : melBuf, [B, 80, 16, 1]);
+    inputs[m.faceIndex] = new Tensor(m.int8 ? quantize(faceBuf, m.q.args_1) : faceBuf, [B, IMG, IMG, 6]);
+    live.push(...inputs);
+    const outs = await m.model.run(inputs);
+    live.push(...outs);
+    const raw = outs[0].toTypedArray();
+    let pred;
+    if (m.int8) { const p = m.q.output_0; pred = Float32Array.from(raw, (v) => (v - p.zero_point) * p.scale); }
+    else pred = raw.slice();
+    if (!state.checked) { state.checked = true; let s = 0; for (let i = 0; i < pred.length; i += 97) s += pred[i]; if (!Number.isFinite(s)) throw new Error('model produced NaN/Inf output'); }
+    return pred;
+  } finally { for (const x of live) { try { x?.delete(); } catch {} } }
 }
 
 // Run k prepared items (laid out back to back in melAll/faceAll) through the current model,
@@ -452,7 +398,6 @@ async function runAll(state, melAll, faceAll, k) {
     melB.set(melAll.subarray(i * 80 * 16, (i + c) * 80 * 16));
     faceB.set(faceAll.subarray(i * IMG * IMG * 6, (i + c) * IMG * IMG * 6));
     const pred = await infer(state, melB, faceB);
-    if (!pred) continue; // model changed; redo this chunk with the new batch size
     out.set(pred.subarray(0, c * IMG * IMG * 3), i * IMG * IMG * 3);
     i += c;
   }
@@ -466,13 +411,13 @@ async function run() {
   stage.classList.add('ready', 'busy'); progress(0); hud('SYNCING'); status('Starting…');
   const t = { detect: 0, model: 0, other: 0 };
   let step = 'starting', wake = null;
-  L.info('━━ Run started', { face: files.face?.name, voice: files.audio?.name, accel: $('accel').value, fps: $('fps').value || 'auto', pad: $('pad').value, smooth: $('smooth').value, maxWidth: $('maxw').value });
+  L.info('━━ Run started', { face: files.face?.name, voice: files.audio?.name, fps: $('fps').value || 'auto', pad: $('pad').value, smooth: $('smooth').value, maxWidth: $('maxw').value });
   try {
     try { wake = await navigator.wakeLock?.request('screen'); L.debug('Screen wake lock on.'); } catch (e) { L.debug('No wake lock:', e.message); }
     step = 'loading the face detector'; status('Loading face detector…');
     await getDetector();
     step = 'loading Wav2Lip'; status('Loading Wav2Lip model…');
-    const state = { m: await getModel($('accel').value), gpuCalls: 0 };
+    const state = { m: await getModel() };
     step = 'decoding the audio'; status('Decoding audio…');
     const { audio, mono16k } = await decodeAudio(files.audio);
     step = 'computing audio features';
@@ -483,7 +428,7 @@ async function run() {
     const starts = melChunkStarts(mel.frames, fps);
     const n = starts.length, W = 8; // frames prepared per round; the model runs them in its own batch size
     L.info(`Plan: ${n} frames at ${fps} fps, rounds of ${W}, model batch ${state.m.batch}, output ${src.w}×${src.h}`);
-    $('acc').textContent = `Wav2Lip ${state.m.label} on ${state.m.accelerator === 'webgpu' ? 'WebGPU' : `CPU, ${cpuThreads} thread(s)`} · batch ${state.m.batch} · face detector on ${detector.delegateName}`;
+    $('acc').textContent = `Wav2Lip ${state.m.label} on CPU, ${cpuThreads} thread(s) · batch ${state.m.batch} · face detector on ${detector.delegateName}`;
 
     view.width = src.w; view.height = src.h;
     hud(`${src.w}×${src.h} · ${fps} FPS`);
@@ -569,7 +514,7 @@ async function run() {
       bt.encode = performance.now() - s3;
       t.detect += bt.detect; t.model += bt.model; t.other += bt.decode + bt.prep + bt.paste + bt.encode;
       const done = i + count, el = (performance.now() - t0) / 1000;
-      L.debug(`round ${i / W + 1}/${Math.ceil(n / W)} [${state.m.accelerator}] frames ${i + 1}-${done}: faces ${k}/${count} · ms decode ${bt.decode.toFixed(0)} detect ${bt.detect.toFixed(0)} prep ${bt.prep.toFixed(0)} model ${bt.model.toFixed(0)} paste ${bt.paste.toFixed(0)} encode ${bt.encode.toFixed(0)} ${memory()}`);
+      L.debug(`round ${i / W + 1}/${Math.ceil(n / W)} frames ${i + 1}-${done}: faces ${k}/${count} · ms decode ${bt.decode.toFixed(0)} detect ${bt.detect.toFixed(0)} prep ${bt.prep.toFixed(0)} model ${bt.model.toFixed(0)} paste ${bt.paste.toFixed(0)} encode ${bt.encode.toFixed(0)} ${memory()}`);
       progress(done / n);
       status(`Frame ${done} of ${n}`);
       $('fps-out').textContent = (done / el).toFixed(1);
@@ -622,8 +567,7 @@ $('run').addEventListener('click', () => run().catch((e) => L.error('Unexpected 
 $('cancel').addEventListener('click', () => { cancelled = true; status('Cancelling…'); });
 $('save').addEventListener('click', save);
 $('open-log').addEventListener('click', openDrawer);
-$('webgpu-note').textContent = navigator.gpu ? 'WebGPU online' : 'No WebGPU · CPU mode';
-$('webgpu-note').classList.toggle('ok', !!navigator.gpu);
-$('accel').addEventListener('change', () => { L.info(`Accelerator set to ${$('accel').value}`); fetchModel(preferredKey()).catch(() => {}); });
+$('cpu-note').textContent = `CPU · ${self.crossOriginIsolated ? `up to ${Math.min(navigator.userAgentData?.mobile ?? /Android|iPhone/.test(navigator.userAgent) ? 4 : 8, navigator.hardwareConcurrency || 1)} threads` : '1 thread'}`;
+$('cpu-note').classList.toggle('ok', self.crossOriginIsolated);
 $('retry').addEventListener('click', () => fetchModel(preferredKey()).catch(() => {}));
 $('clear-model').addEventListener('click', (e) => { e.preventDefault(); setFile('model', null); });
