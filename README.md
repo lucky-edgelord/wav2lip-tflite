@@ -1,5 +1,7 @@
 # wav2lip-tflite
 
+**Try it in your browser: [https://lucky-edgelord.github.io/wav2lip-tflite/](https://lucky-edgelord.github.io/wav2lip-tflite/)**
+
 Wav2Lip lip-sync running on [LiteRT](https://ai.google.dev/edge/litert) with GPU acceleration, using MediaPipe's BlazeFace face detector instead of S3FD. Built and tested for Apple Silicon (Metal), but runs anywhere `ai-edge-litert` does.
 
 ```
@@ -68,6 +70,8 @@ Tuning:
 - `--accelerator gpu|cpu|npu`: falls back to CPU automatically if the accelerator isn't available.
 
 ## Web version
+
+**Live page: [https://lucky-edgelord.github.io/wav2lip-tflite/](https://lucky-edgelord.github.io/wav2lip-tflite/)**
 
 `web/` runs the same pipeline in the browser with LiteRT.js (WebGPU) and MediaPipe: upload a face video,
 driving audio and the converted model, get an MP4 back. See [web/README.md](web/README.md).
