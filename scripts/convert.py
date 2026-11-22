@@ -92,6 +92,7 @@ def main():
 
     base = os.path.join(args.out_dir, f"{name}_b{args.batch}")
     float_path = f"{base}_fp32.tflite"
+    keep_float = "fp32" in args.precision or os.path.exists(float_path)
     export_float(model, args.batch, float_path)
 
     calib = None
@@ -102,7 +103,7 @@ def main():
             calib = calibration_set(args.calib, args.batch, args.calib_steps)
         quantize(float_path, f"{base}_{p}.tflite", p, calib)
 
-    if "fp32" not in args.precision:
+    if not keep_float:  # only an intermediate for this run
         os.remove(float_path)
 
 

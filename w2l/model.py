@@ -139,7 +139,9 @@ def _fold_bn(conv, bn):
 
 
 def load_wav2lip(checkpoint_path: str) -> Wav2Lip:
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    # weights_only=True refuses arbitrary pickled code, which matters because
+    # these checkpoints are usually fetched from third-party mirrors.
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     state = ckpt.get("state_dict", ckpt)
     state = {k.replace("module.", "", 1): v for k, v in state.items()}
     model = Wav2Lip()
