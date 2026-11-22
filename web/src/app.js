@@ -17,6 +17,19 @@ let running = false, cancelled = false, resultBlob = null, liteRtReady = null, d
 
 // ---------- file pickers (click or drop) ----------
 const fmtSize = (n) => (n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+async function pickFile(kind, file) {
+  if (kind === 'model') return setFile(kind, file);
+  const row = document.querySelector(`.pick[data-kind="${kind}"]`);
+  row.querySelector('.name').textContent = `Reading ${file.name}…`;
+  try {
+    // Copy into memory now: on Android, picked files (e.g. from Photos) can fail to read later.
+    const copy = new File([await file.arrayBuffer()], file.name, { type: file.type });
+    setFile(kind, copy);
+  } catch (e) {
+    setFile(kind, null);
+    status(`Could not read ${file.name} (${e.message}). If it is only in the cloud (Google Photos/Drive), save it to the phone first.`);
+  }
+}
 function setFile(kind, file, note) {
   files[kind] = file;
   const row = document.querySelector(`.pick[data-kind="${kind}"]`);
@@ -29,55 +42,82 @@ function setFile(kind, file, note) {
 for (const row of document.querySelectorAll('.pick')) {
   const input = row.querySelector('input');
   row.dataset.empty = row.querySelector('.name').textContent;
-  input.addEventListener('change', () => input.files[0] && setFile(row.dataset.kind, input.files[0]));
+  input.addEventListener('change', () => input.files[0] && pickFile(row.dataset.kind, input.files[0]));
   row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('over'); });
   row.addEventListener('dragleave', () => row.classList.remove('over'));
   row.addEventListener('drop', (e) => {
     e.preventDefault(); row.classList.remove('over');
-    if (e.dataTransfer.files[0]) setFile(row.dataset.kind, e.dataTransfer.files[0]);
+    if (e.dataTransfer.files[0]) pickFile(row.dataset.kind, e.dataTransfer.files[0]);
   });
 }
 
 // ---------- bundled INT8 models, fetched from this site with progress ----------
 const loading = {};
+const CACHE = 'wav2lip-models-v1';
+async function download(url, entry, label) {
+  // Abort if no data arrives for 15 s: a dropped mobile connection can otherwise hang forever.
+  const ctl = new AbortController();
+  let watchdog;
+  const arm = () => { clearTimeout(watchdog); watchdog = setTimeout(() => ctl.abort(new Error('connection stalled')), 15000); };
+  arm();
+  try {
+  const res = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  // The server may gzip the file, so Content-Length can be the compressed size:
+  // count decompressed bytes against the size recorded in models.json.
+  const reader = res.body.getReader(), chunks = [];
+  let got = 0, lastPaint = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length; arm();
+    if (performance.now() - lastPaint > 100) { lastPaint = performance.now(); dl({ label, url, got, total: entry.bytes }); }
+  }
+  if (got !== entry.bytes) throw new Error(`incomplete download (${fmtSize(got)} of ${fmtSize(entry.bytes)})`);
+  const buf = new Uint8Array(got);
+  for (let o = 0, i = 0; i < chunks.length; o += chunks[i].length, i++) buf.set(chunks[i], o);
+  return buf;
+  } catch (e) { throw ctl.signal.aborted ? ctl.signal.reason : e; } finally { clearTimeout(watchdog); }
+}
 async function fetchModel(key) {
   if (modelBytes[key]) return modelBytes[key];
   return (loading[key] ??= (async () => {
     try {
-      manifest ??= await (await fetch(base('./assets/models.json'))).json();
+      manifest ??= await (await fetch(base('./assets/models.json'), { cache: 'no-store' })).json();
       const entry = manifest[key], url = base(`./assets/${entry.file}`);
       const label = entry.precision === 'int8' ? 'Full INT8 (CPU)' : 'INT8 weights (GPU)';
+      const cacheKey = `${url}?bytes=${entry.bytes}`;
+      let buf = null;
+      try { // saved copy from an earlier visit
+        const hit = await (await caches.open(CACHE)).match(cacheKey);
+        if (hit) { const b = new Uint8Array(await hit.arrayBuffer()); if (b.length === entry.bytes) buf = b; }
+      } catch {}
+      if (buf) { dl({ label, url, got: buf.length, total: entry.bytes, done: true, cached: true }); return (modelBytes[key] = buf); }
       dl({ label, url, got: 0, total: entry.bytes });
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      // The server may gzip the file, so Content-Length can be the compressed size:
-      // count decompressed bytes against the size recorded in models.json.
-      const reader = res.body.getReader(), chunks = [];
-      let got = 0, lastPaint = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value); got += value.length;
-        if (performance.now() - lastPaint > 100) { lastPaint = performance.now(); dl({ label, url, got, total: entry.bytes }); }
+      for (let attempt = 1; ; attempt++) {
+        try { buf = await download(url, entry, label); break; }
+        catch (e) {
+          if (attempt === 3) throw new Error(`${e.message} (after 3 tries)`);
+          dl({ label, url, got: 0, total: entry.bytes, note: `connection dropped (${e.message}), retrying ${attempt + 1}/3…` });
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
       }
-      const buf = new Uint8Array(got);
-      for (let o = 0, i = 0; i < chunks.length; o += chunks[i].length, i++) buf.set(chunks[i], o);
-      if (got !== entry.bytes) throw new Error(`size mismatch: got ${fmtSize(got)}, expected ${fmtSize(entry.bytes)}`);
+      try { await (await caches.open(CACHE)).put(cacheKey, new Response(buf)); } catch {}
       modelBytes[key] = buf;
-      dl({ label, url, got, total: entry.bytes, done: true });
+      dl({ label, url, got: buf.length, total: entry.bytes, done: true });
       return buf;
     } catch (e) {
       dl({ error: `Model download failed: ${e.message}` });
-      throw e;
+      throw new Error(`model download failed: ${e.message}`);
     } finally { delete loading[key]; }
   })());
 }
-function dl({ label, url, got, total, done, error }) {
+function dl({ label, url, got, total, done, error, cached, note }) {
   const box = $('dl'), pct = total ? Math.min(100, (got / total) * 100) : 0;
   box.classList.toggle('err', !!error); box.classList.toggle('ok', !!done);
   $('retry').hidden = !error;
   if (error) { $('dl-title').textContent = error; $('model-state').textContent = 'Model: error'; return; }
-  $('dl-title').textContent = done ? `${label} model ready` : `Downloading ${label} model`;
+  $('dl-title').textContent = done ? `${label} model ready${cached ? ' (saved on this device)' : ''}` : note ? `${label}: ${note}` : `Downloading ${label} model`;
   $('dl-bar').style.width = `${pct.toFixed(1)}%`;
   $('dl-num').textContent = `${(got / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB · ${Math.floor(pct)}%`;
   $('dl-src').textContent = `from ${url.replace(/^https?:\/\//, '')}`;
@@ -227,14 +267,16 @@ async function run() {
   $('run').disabled = true; $('cancel').hidden = false; $('save').hidden = true; $('result').hidden = true; view.hidden = false;
   stage.classList.add('ready', 'busy'); progress(0); hud('SYNCING');
   const t = { detect: 0, model: 0, other: 0 };
+  let step = 'start';
   try {
-    status('Loading face detector…');
+    step = 'loading the face detector'; status('Loading face detector…');
     await getDetector();
-    status('Loading Wav2Lip model…');
+    step = 'loading Wav2Lip'; status('Loading Wav2Lip model…');
     const m = await getModel($('accel').value);
-    status('Decoding audio…');
+    step = 'decoding the audio'; status('Decoding audio…');
     const { audio, mono16k } = await decodeAudio(files.audio);
     const mel = await melspectrogram(mono16k, (f) => status(`Computing mel spectrogram… ${Math.round(f * 100)}%`));
+    step = 'opening the face video';
     const src = await openFace(files.face, +$('maxw').value);
     const fps = +$('fps').value || (src.fps ? Math.round(src.fps * 100) / 100 : 25);
     const starts = melChunkStarts(mel.frames, fps);
@@ -245,6 +287,7 @@ async function run() {
     hud(`${src.w}×${src.h} · ${fps} FPS`);
     const vcodec = await getFirstEncodableVideoCodec(['avc', 'vp9', 'av1'], { width: src.w, height: src.h });
     const acodec = await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: audio.numberOfChannels, sampleRate: audio.sampleRate });
+    step = 'setting up the video encoder';
     if (!vcodec) throw new Error('This browser cannot encode video (WebCodecs). Try Chrome or Edge.');
     const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
     const vsrc = new CanvasSource(view, { codec: vcodec, bitrate: QUALITY_HIGH });
@@ -259,6 +302,7 @@ async function run() {
     const patch = new OffscreenCanvas(IMG, IMG), pctx = patch.getContext('2d');
     const melBuf = new Float32Array(B * 80 * 16), faceBuf = new Float32Array(B * IMG * IMG * 6);
     const frames = src.frames(n, fps);
+    step = 'rendering frames';
     const t0 = performance.now();
 
     for (let i = 0; i < n && !cancelled; i += B) {
@@ -335,7 +379,7 @@ async function run() {
     }
 
     if (cancelled) { await output.cancel(); status('Cancelled.'); return; }
-    status('Finishing MP4…');
+    step = 'writing the MP4'; status('Finishing MP4…');
     if (asrc) await asrc.add(audio);
     await output.finalize();
     resultBlob = new Blob([output.target.buffer], { type: 'video/mp4' });
@@ -346,7 +390,7 @@ async function run() {
     status(`Done: ${n} frames in ${secs.toFixed(1)} s (${(n / secs).toFixed(1)} fps)${acodec ? '' : ' · no audio encoder, video is silent'}.`);
   } catch (e) {
     console.error(e);
-    status(`Error: ${e.message || e}`);
+    status(`Error while ${step}: ${e.message || e}`);
   } finally {
     running = false; stage.classList.remove('busy');
     if (resultBlob) hud('SYNCED');
