@@ -39,31 +39,53 @@ for (const row of document.querySelectorAll('.pick')) {
 }
 
 // ---------- bundled INT8 models, fetched from this site with progress ----------
+const loading = {};
 async function fetchModel(key) {
   if (modelBytes[key]) return modelBytes[key];
-  manifest ??= await (await fetch(base('./assets/models.json'))).json();
-  const entry = manifest[key];
-  const res = await fetch(base(`./assets/${entry.file}`));
-  if (!res.ok) throw new Error(`Could not download the model (${res.status}).`);
-  const total = +res.headers.get('content-length') || entry.bytes;
-  const reader = res.body.getReader(), buf = new Uint8Array(total);
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf.set(value, got); got += value.length;
-    modelState(`${entry.precision === 'int8' ? 'INT8' : 'INT8 weights'} · ${fmtSize(total)} · ${Math.round((got / total) * 100)}%`, key);
-  }
-  modelBytes[key] = buf;
-  modelState(`${entry.precision === 'int8' ? 'INT8' : 'INT8 weights'} · ${fmtSize(total)} · ready`, key, true);
-  return buf;
+  return (loading[key] ??= (async () => {
+    try {
+      manifest ??= await (await fetch(base('./assets/models.json'))).json();
+      const entry = manifest[key], url = base(`./assets/${entry.file}`);
+      const label = entry.precision === 'int8' ? 'Full INT8 (CPU)' : 'INT8 weights (GPU)';
+      dl({ label, url, got: 0, total: entry.bytes });
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // The server may gzip the file, so Content-Length can be the compressed size:
+      // count decompressed bytes against the size recorded in models.json.
+      const reader = res.body.getReader(), chunks = [];
+      let got = 0, lastPaint = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length;
+        if (performance.now() - lastPaint > 100) { lastPaint = performance.now(); dl({ label, url, got, total: entry.bytes }); }
+      }
+      const buf = new Uint8Array(got);
+      for (let o = 0, i = 0; i < chunks.length; o += chunks[i].length, i++) buf.set(chunks[i], o);
+      if (got !== entry.bytes) throw new Error(`size mismatch: got ${fmtSize(got)}, expected ${fmtSize(entry.bytes)}`);
+      modelBytes[key] = buf;
+      dl({ label, url, got, total: entry.bytes, done: true });
+      return buf;
+    } catch (e) {
+      dl({ error: `Model download failed: ${e.message}` });
+      throw e;
+    } finally { delete loading[key]; }
+  })());
 }
-function modelState(text, key, ready) {
-  $('model-state').textContent = `${key === 'gpu' ? 'GPU' : 'CPU'} model: ${text}`;
-  $('model-state').classList.toggle('ok', !!ready);
+function dl({ label, url, got, total, done, error }) {
+  const box = $('dl'), pct = total ? Math.min(100, (got / total) * 100) : 0;
+  box.classList.toggle('err', !!error); box.classList.toggle('ok', !!done);
+  $('retry').hidden = !error;
+  if (error) { $('dl-title').textContent = error; $('model-state').textContent = 'Model: error'; return; }
+  $('dl-title').textContent = done ? `${label} model ready` : `Downloading ${label} model`;
+  $('dl-bar').style.width = `${pct.toFixed(1)}%`;
+  $('dl-num').textContent = `${(got / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB · ${Math.floor(pct)}%`;
+  $('dl-src').textContent = `from ${url.replace(/^https?:\/\//, '')}`;
+  $('model-state').textContent = done ? `${label}: ready` : `${label}: ${Math.floor(pct)}%`;
+  $('model-state').classList.toggle('ok', !!done);
 }
 const preferredKey = () => ($('accel').value === 'wasm' || !navigator.gpu ? 'cpu' : 'gpu');
-fetchModel(preferredKey()).catch((e) => modelState(`unavailable (${e.message})`, preferredKey()));
+fetchModel(preferredKey()).catch(() => {});
 
 // ---------- preview ----------
 const stage = $('stage'), view = $('view'), vctx = view.getContext('2d');
@@ -352,4 +374,5 @@ $('save').addEventListener('click', save);
 $('webgpu-note').textContent = navigator.gpu ? 'WebGPU online' : 'No WebGPU · CPU mode';
 $('webgpu-note').classList.toggle('ok', !!navigator.gpu);
 $('accel').addEventListener('change', () => fetchModel(preferredKey()).catch(() => {}));
+$('retry').addEventListener('click', () => fetchModel(preferredKey()).catch(() => {}));
 $('clear-model').addEventListener('click', (e) => { e.preventDefault(); setFile('model', null); });

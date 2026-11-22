@@ -86,6 +86,15 @@ label.f{font-size:13px;color:var(--muted);display:grid;gap:4px}
 label.f input,label.f select{font:inherit;font-size:16px;color:var(--ink);background:#0b0a14;border:1px solid var(--line);min-height:44px;padding:0 10px;width:100%}
 .hint{font-size:13px;color:var(--muted);margin:12px 0 0}
 .hint a{color:var(--cyan)}
+.dl{margin-top:18px;padding:12px 14px;max-width:760px;background:#0b0a14;border:1px solid var(--line)}
+.dl-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:14px;font-weight:600}
+#dl-num{font:500 13px "JetBrains Mono",monospace;color:var(--cyan);white-space:nowrap}
+.dl-track{height:6px;margin-top:8px;background:#1b1930}
+.dl-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--pink));box-shadow:0 0 10px rgba(5,217,232,.6);transition:width .15s}
+.dl-src{font-size:12px;color:var(--muted);margin-top:6px;overflow-wrap:anywhere}
+.dl.ok{border-color:rgba(5,217,232,.5);padding-block:8px}.dl.ok .dl-track{display:none}.dl.ok #dl-title{color:var(--cyan)}
+.dl.err{border-color:var(--pink)}.dl.err #dl-title{color:var(--pink)}.dl.err .dl-track,.dl.err #dl-num{display:none}
+#retry{margin-top:10px;border-color:var(--pink);color:var(--pink)}
 footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
 footer p{margin:0 0 6px;max-width:80ch}
 footer a{color:var(--cyan)}
@@ -106,6 +115,12 @@ footer a{color:var(--cyan)}
       <span class="chip" id="model-state">Model: loading…</span>
     </div>
   </header>
+  <div class="dl" id="dl" aria-live="polite">
+    <div class="dl-head"><span id="dl-title">Preparing model download…</span><span id="dl-num"></span></div>
+    <div class="dl-track"><div class="dl-bar" id="dl-bar"></div></div>
+    <div class="dl-src" id="dl-src"></div>
+    <button class="btn" id="retry" hidden>Retry download</button>
+  </div>
 
   <main>
     <section aria-label="Video feed">
