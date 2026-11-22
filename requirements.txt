@@ -1,0 +1,6 @@
+ai-edge-litert>=2.3
+mediapipe>=0.10.14
+numpy
+opencv-python
+librosa>=0.10
+scipy

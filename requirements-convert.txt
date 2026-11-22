@@ -1,0 +1,4 @@
+-r requirements.txt
+torch
+litert-torch>=0.10
+ai-edge-quantizer>=0.10

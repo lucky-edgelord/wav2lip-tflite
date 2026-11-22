@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+checkpoints/
+models/
+*.tflite
+*.pth
+*.npz
+*.mp4
+*.avi
+*.wav
