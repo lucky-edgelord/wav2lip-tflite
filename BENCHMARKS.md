@@ -49,11 +49,23 @@ Same clip, batch 8 FP32 model, headless Chrome 153 on the same CPU-only machine:
 |---|---:|---:|---:|---:|
 | CPU (Wasm), FP32 | 3.1 fps | 245 ms/frame | 68 ms/frame* | 8 ms/frame |
 | CPU (Wasm), full INT8 | 6.4 fps | **72 ms/frame** | 73 ms/frame* | 10 ms/frame |
+| CPU (Wasm), full INT8, 2 threads | – | **45 ms/frame** | – | – |
 | WebGPU via SwiftShader (software), FP32 | 0.4 fps | 2429 ms/frame | 228 ms/frame* | 11 ms/frame |
 | WebGPU via SwiftShader (software), INT8 weights | 0.1 fps | 6959 ms/frame | 242 ms/frame* | 13 ms/frame |
 
 \* MediaPipe ran its "GPU" delegate on software WebGL here; on real hardware detection is a few ms.
 Wasm is ~2.7× slower than native XNNPACK on the same machine. These are floor numbers; measure on a real GPU.
+
+## Phone (Android, Adreno 6xx, 4 GB, Chrome 157), from the in-app log
+
+Same clip + 8.5 s speech, 209 frames, build `ea71260` (before threads and batch-1 GPU):
+
+| path | Wav2Lip | notes |
+|---|---:|---|
+| WebGPU, INT8 weights, batch 8 | ~373 ms/frame (first batch incl. warm-up) | then `VK_ERROR_DEVICE_LOST` on batch 2 |
+| CPU fallback, full INT8, 1 thread | ~1060 ms/frame | finished all frames; 0.8 fps overall |
+
+Face detection (MediaPipe GPU) ~25–30 ms/frame. Fixes since: batch-1 GPU model, multithreaded CPU.
 
 ## INT8 on an unseen face
 

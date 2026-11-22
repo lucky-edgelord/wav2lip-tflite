@@ -9,8 +9,8 @@ The INT8 Wav2Lip models ship with the site (`assets/`, ~37 MB each) and load aut
 
 | device | model | why |
 |---|---|---|
-| WebGPU available | `wav2lip_gan_b8_int8w.tflite`: INT8 weights, float I/O | WebGPU expands weights to float; 49 dB vs PyTorch on an unseen face |
-| CPU only | `wav2lip_gan_b8_int8.tflite`: full INT8, int8 I/O | 3.4× faster than FP32 in Wasm; 35 dB on an unseen face (faint grain) |
+| WebGPU available | `wav2lip_gan_b1_int8w.tflite`: INT8 weights, float I/O, batch 1 | WebGPU expands weights to float; 49 dB vs PyTorch on an unseen face |
+| CPU only, or after a GPU failure | `wav2lip_gan_b8_int8.tflite`: full INT8, int8 I/O, batch 8, multithreaded | 3.4× faster than FP32 in Wasm; 35 dB on an unseen face (faint grain) |
 
 The full-INT8 model's input/output scales live in `assets/models.json` because LiteRT.js does not
 expose quantization parameters. Rebuild both with
@@ -22,6 +22,19 @@ You can still load your own fp32/int8w model under Settings.
 - **Face boxes**: MediaPipe Tasks Vision `FaceDetector` (BlazeFace short-range), same padding/smoothing as `w2l/face.py`
 - **Audio features**: `src/mel.js`, a port of `w2l/audio.py` (matches librosa to 2e-5)
 - **Video in/out**: [Mediabunny](https://mediabunny.dev) on WebCodecs (H.264 + AAC/Opus MP4)
+
+### Phones
+
+Tested on an Android phone (Adreno 6xx, 4 GB RAM, Chrome 157). With a batch-8 GPU model the GPU
+driver reset after the first batch (`VK_ERROR_DEVICE_LOST`), so the GPU model is now batch 1 (8×
+smaller submissions). If WebGPU still fails, the run switches to CPU mid-video and redoes those
+frames, and **Auto** remembers it and starts on CPU next time on that device (pick *GPU · WebGPU*
+in Settings to try again).
+
+CPU inference is multithreaded when the page is cross-origin isolated. GitHub Pages cannot send the
+needed headers, so `coi-sw.js` (a 20-line service worker) adds them; the page reloads itself once on
+the first visit. On that phone single-threaded full INT8 ran at ~1.06 s/frame; with 2 threads on a
+2-core test machine Wav2Lip went from 72 to 45 ms/frame.
 
 ## Log console
 

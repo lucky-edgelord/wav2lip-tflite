@@ -1,14 +1,14 @@
 {
   "gpu": {
-    "file": "wav2lip_gan_b8_int8w.tflite",
+    "file": "wav2lip_gan_b1_int8w.tflite",
     "precision": "int8w",
-    "batch": 8,
+    "batch": 1,
     "bytes": 36556320,
     "io": {
       "args_0": {
         "dtype": "float32",
         "shape": [
-          8,
+          1,
           80,
           16,
           1
@@ -19,7 +19,7 @@
       "args_1": {
         "dtype": "float32",
         "shape": [
-          8,
+          1,
           96,
           96,
           6
@@ -30,7 +30,7 @@
       "output_0": {
         "dtype": "float32",
         "shape": [
-          8,
+          1,
           96,
           96,
           3

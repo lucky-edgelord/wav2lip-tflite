@@ -23,9 +23,10 @@ await build({
   define: { __BUILD__: JSON.stringify(BUILD) },
 });
 cpSync('index.html', `${out}/index.html`);
+cpSync('coi-sw.js', `${out}/coi-sw.js`); // must sit at the site root to control the page
 
-// LiteRT.js picks the relaxed-SIMD build or the compat build at runtime; ship both.
-for (const f of ['litert_wasm_internal', 'litert_wasm_compat_internal'])
+// LiteRT.js picks the relaxed-SIMD, compat or (when cross-origin isolated) threaded build at runtime.
+for (const f of ['litert_wasm_internal', 'litert_wasm_compat_internal', 'litert_wasm_threaded_internal'])
   for (const ext of ['.js', '.wasm']) cpSync(`node_modules/@litertjs/core/wasm/${f}${ext}`, `${out}/litert/${f}${ext}`);
 for (const ext of ['.js', '.wasm'])
   cpSync(`node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal${ext}`, `${out}/mediapipe/vision_wasm_internal${ext}`);

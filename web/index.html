@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wav2Lip // Neural Sync</title>
 <link rel="icon" href="data:,">
+<script>
+// Enable cross-origin isolation (multithreaded CPU inference) through coi-sw.js, then reload once.
+(function () {
+  if (self.crossOriginIsolated || !('serviceWorker' in navigator) || !window.isSecureContext || !('credentialless' in window)) return;
+  navigator.serviceWorker.register('./coi-sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () {
+    var k = 'coi-reloaded'; var done; try { done = sessionStorage.getItem(k); sessionStorage.setItem(k, '1'); } catch (e) { done = '1'; }
+    if (!done && !self.crossOriginIsolated) location.reload();
+  }).catch(function (e) { console.warn('Isolation service worker not registered:', e); });
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">

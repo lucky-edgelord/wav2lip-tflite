@@ -2,7 +2,7 @@
 // WebGPU or CPU) -> paste back -> MP4 via WebCodecs (Mediabunny). Mirrors infer.py.
 // Every step logs to the in-page console (src/log.js); open it with the Log button.
 import { L, envReport, mountLogUI, memory, openDrawer } from './log.js';
-import { loadLiteRt, loadAndCompile, Tensor, getWebGpuDevice } from '@litertjs/core';
+import { loadLiteRt, loadAndCompile, Tensor, getWebGpuDevice, supportsFeature } from '@litertjs/core';
 import { FilesetResolver, FaceDetector } from '@mediapipe/tasks-vision';
 import {
   Input, ALL_FORMATS, BlobSource, CanvasSink, AudioBufferSink, Output, Mp4OutputFormat, BufferTarget,
@@ -17,6 +17,8 @@ const $ = (id) => document.getElementById(id);
 const base = (p) => new URL(p, location.href).href;
 const files = { face: null, audio: null, model: null };
 let manifest = null; const modelBytes = {}; // 'gpu' | 'cpu' | 'custom' -> Uint8Array
+const SIMULATE_GPU_LOSS = new URLSearchParams(location.search).get('simulate') === 'gpu-loss'; // test hook
+let cpuThreads = 1;
 let running = false, cancelled = false, resultBlob = null, liteRtReady = null, detector = null, detectorTs = 0, fileset = null;
 
 mountLogUI('wav2lip-log');
@@ -156,7 +158,11 @@ function dl({ label, url, got, total, done, error, cached, note }) {
   $('model-state').textContent = done ? `${label}: ready` : `${label}: ${Math.floor(pct)}%`;
   $('model-state').classList.toggle('ok', !!done);
 }
-const preferredKey = () => ($('accel').value === 'wasm' || !navigator.gpu ? 'cpu' : 'gpu');
+// If WebGPU crashed on this device with this model, Auto mode starts on CPU next time.
+const gpuLostKey = () => `w2l-gpu-lost:${manifest?.gpu?.file || 'gpu'}`;
+const gpuLostBefore = () => { try { return !!localStorage.getItem(gpuLostKey()); } catch { return false; } };
+const rememberGpuLost = (why) => { try { localStorage.setItem(gpuLostKey(), `${new Date().toISOString()} ${why}`); } catch {} };
+const preferredKey = () => ($('accel').value === 'wasm' || !navigator.gpu || ($('accel').value === 'auto' && gpuLostBefore()) ? 'cpu' : 'gpu');
 fetchModel(preferredKey()).catch(() => {});
 
 // ---------- preview ----------
@@ -207,7 +213,8 @@ async function getDetector(forceCpu = false) {
 }
 
 async function compile(bytes, accelerator) {
-  const model = await L.step(`compile Wav2Lip for ${accelerator} (${fmtSize(bytes.length)})`, () => loadAndCompile(bytes, { accelerator }));
+  const opts = accelerator === 'wasm' ? { accelerator, cpuOptions: { numThreads: cpuThreads } } : { accelerator };
+  const model = await L.step(`compile Wav2Lip for ${accelerator}${accelerator === 'wasm' ? `, ${cpuThreads} thread(s)` : ''} (${fmtSize(bytes.length)})`, () => loadAndCompile(bytes, opts));
   const ins = model.getInputDetails(), outs = model.getOutputDetails?.() || [];
   L.debug('Model inputs:', ins.map((d) => ({ name: d.name, index: d.index, dtype: d.dtype, shape: [...d.shape] })));
   L.debug('Model outputs:', outs.map((d) => ({ name: d.name, dtype: d.dtype, shape: [...d.shape] })));
@@ -225,13 +232,37 @@ async function compile(bytes, accelerator) {
 }
 
 async function ensureLiteRt() {
-  liteRtReady ??= L.step('load LiteRT.js Wasm runtime', () => loadLiteRt(base('./litert/')));
+  liteRtReady ??= (async () => {
+    // Multithreaded CPU needs cross-origin isolation (coi-sw.js adds the headers) and relaxed SIMD.
+    let threads = false;
+    if (self.crossOriginIsolated) {
+      try { threads = (await supportsFeature('relaxedSimd')) !== false; } catch { threads = false; }
+    }
+    const mobile = navigator.userAgentData?.mobile ?? /Android|iPhone|iPad/.test(navigator.userAgent);
+    cpuThreads = threads ? Math.max(1, Math.min(mobile ? 4 : 8, navigator.hardwareConcurrency || 1)) : 1;
+    L.info(`CPU inference: ${threads ? `${cpuThreads} threads` : 'single thread'}`, { crossOriginIsolated: self.crossOriginIsolated, cores: navigator.hardwareConcurrency });
+    if (!self.crossOriginIsolated) L.warn('Page is not cross-origin isolated, so CPU inference is single-threaded. Reload once to let the helper service worker enable threads.');
+    try {
+      await L.step(`load LiteRT.js Wasm runtime (${threads ? 'threaded' : 'single-threaded'})`, () => loadLiteRt(base('./litert/'), { threads }));
+    } catch (e) {
+      if (!threads) throw e;
+      L.warn('Threaded LiteRT failed to load, using single-threaded:', e);
+      cpuThreads = 1;
+      await L.step('load LiteRT.js Wasm runtime (single-threaded)', () => loadLiteRt(base('./litert/'), { threads: false }));
+    }
+  })();
   try { await liteRtReady; } catch (e) { liteRtReady = null; throw e; }
 }
 
 async function getModel(want, onlyCpu = false) {
   await ensureLiteRt();
-  const gpuOk = !onlyCpu && want !== 'wasm' && !!navigator.gpu;
+  if (!manifest) { try { await fetchModel(preferredKey()); } catch {} }
+  let gpuOk = !onlyCpu && want !== 'wasm' && !!navigator.gpu;
+  if (gpuOk && want === 'auto' && gpuLostBefore()) {
+    L.warn('WebGPU crashed on this device in an earlier run, so Auto starts on CPU. Choose "GPU · WebGPU" in Settings to try the GPU again.');
+    gpuOk = false;
+  }
+  if (want === 'webgpu') { try { localStorage.removeItem(gpuLostKey()); } catch {} }
   if (files.model) { // user's own model: float I/O only (no quantization params available)
     modelBytes.custom ??= new Uint8Array(await files.model.arrayBuffer());
     for (const acc of gpuOk ? ['webgpu', 'wasm'] : ['wasm']) {
@@ -384,6 +415,7 @@ async function infer(state, melBuf, faceBuf) {
       // moveTo() hands the data to the GPU and invalidates the CPU tensor.
       const moved = m.accelerator === 'webgpu' ? await Promise.all(inputs.map((x) => x.moveTo('webgpu'))) : inputs;
       live = [...moved];
+      if (SIMULATE_GPU_LOSS && m.accelerator === 'webgpu' && ++state.gpuCalls >= 2) throw new Error('simulated WebGPU device loss (?simulate=gpu-loss)');
       const outs = await m.model.run(moved);
       const host = await outs[0].moveTo('wasm');
       const raw = host.toTypedArray();
@@ -395,15 +427,32 @@ async function infer(state, melBuf, faceBuf) {
       return pred;
     } catch (e) {
       if (state.m.accelerator !== 'webgpu' || state.fellBack) throw e;
-      L.error('Wav2Lip failed on WebGPU; switching to CPU and retrying this batch:', e);
+      L.error('Wav2Lip failed on WebGPU; switching to CPU and redoing these frames:', e);
+      if (!files.model) rememberGpuLost(e.message);
       status('GPU failed, continuing on CPU…');
       state.fellBack = true;
-      const old = B;
       state.m = await getModel('wasm', true);
-      if (state.m.batch !== old) throw new Error(`CPU model batch ${state.m.batch} differs from GPU batch ${old}`);
-      $('acc').textContent = `Wav2Lip ${state.m.label} on CPU (GPU failed) · batch ${state.m.batch}`;
+      $('acc').textContent = `Wav2Lip ${state.m.label} on CPU (GPU failed) · batch ${state.m.batch} · ${cpuThreads} thread(s)`;
+      return null; // model (and maybe batch size) changed: caller re-chunks
     } finally { for (const x of live) { try { x?.delete(); } catch {} } }
   }
+}
+
+// Run k prepared items (laid out back to back in melAll/faceAll) through the current model,
+// in chunks of its batch size. Survives a mid-run switch to a model with another batch size.
+async function runAll(state, melAll, faceAll, k) {
+  const out = new Float32Array(k * IMG * IMG * 3);
+  for (let i = 0; i < k;) {
+    const B = state.m.batch, c = Math.min(B, k - i);
+    const melB = new Float32Array(B * 80 * 16), faceB = new Float32Array(B * IMG * IMG * 6);
+    melB.set(melAll.subarray(i * 80 * 16, (i + c) * 80 * 16));
+    faceB.set(faceAll.subarray(i * IMG * IMG * 6, (i + c) * IMG * IMG * 6));
+    const pred = await infer(state, melB, faceB);
+    if (!pred) continue; // model changed; redo this chunk with the new batch size
+    out.set(pred.subarray(0, c * IMG * IMG * 3), i * IMG * IMG * 3);
+    i += c;
+  }
+  return out;
 }
 
 // ---------- main ----------
@@ -419,7 +468,7 @@ async function run() {
     step = 'loading the face detector'; status('Loading face detector…');
     await getDetector();
     step = 'loading Wav2Lip'; status('Loading Wav2Lip model…');
-    const state = { m: await getModel($('accel').value) };
+    const state = { m: await getModel($('accel').value), gpuCalls: 0 };
     step = 'decoding the audio'; status('Decoding audio…');
     const { audio, mono16k } = await decodeAudio(files.audio);
     step = 'computing audio features';
@@ -428,9 +477,9 @@ async function run() {
     const src = await openFace(files.face, +$('maxw').value);
     const fps = +$('fps').value || (src.fps ? Math.round(src.fps * 100) / 100 : 25);
     const starts = melChunkStarts(mel.frames, fps);
-    const n = starts.length, B = state.m.batch;
-    L.info(`Plan: ${n} frames at ${fps} fps, ${Math.ceil(n / B)} batches of ${B}, output ${src.w}×${src.h}`);
-    $('acc').textContent = `Wav2Lip ${state.m.label} on ${state.m.accelerator === 'webgpu' ? 'WebGPU' : 'CPU'} · batch ${B} · face detector on ${detector.delegateName}`;
+    const n = starts.length, W = 8; // frames prepared per round; the model runs them in its own batch size
+    L.info(`Plan: ${n} frames at ${fps} fps, rounds of ${W}, model batch ${state.m.batch}, output ${src.w}×${src.h}`);
+    $('acc').textContent = `Wav2Lip ${state.m.label} on ${state.m.accelerator === 'webgpu' ? 'WebGPU' : `CPU, ${cpuThreads} thread(s)`} · batch ${state.m.batch} · face detector on ${detector.delegateName}`;
 
     view.width = src.w; view.height = src.h;
     hud(`${src.w}×${src.h} · ${fps} FPS`);
@@ -449,16 +498,16 @@ async function run() {
 
     const faceStats = { found: 0, missed: 0 };
     const box = boxer(+$('pad').value, +$('smooth').value, faceStats);
-    const pool = Array.from({ length: B }, () => { const c = document.createElement('canvas'); c.width = src.w; c.height = src.h; return c; });
+    const pool = Array.from({ length: W }, () => { const c = document.createElement('canvas'); c.width = src.w; c.height = src.h; return c; });
     const crop = new OffscreenCanvas(IMG, IMG), cctx = crop.getContext('2d', { willReadFrequently: true });
     const patch = new OffscreenCanvas(IMG, IMG), pctx = patch.getContext('2d');
-    const melBuf = new Float32Array(B * 80 * 16), faceBuf = new Float32Array(B * IMG * IMG * 6);
+    const melBuf = new Float32Array(W * 80 * 16), faceBuf = new Float32Array(W * IMG * IMG * 6);
     const frames = src.frames(n, fps);
     step = 'rendering frames';
     const t0 = performance.now();
 
-    for (let i = 0; i < n && !cancelled; i += B) {
-      const count = Math.min(B, n - i), boxes = [], bt = { decode: 0, detect: 0, prep: 0, model: 0, paste: 0, encode: 0 };
+    for (let i = 0; i < n && !cancelled; i += W) {
+      const count = Math.min(W, n - i), boxes = [], bt = { decode: 0, detect: 0, prep: 0, model: 0, paste: 0, encode: 0 };
       let k = 0;
       melBuf.fill(0); faceBuf.fill(0);
       for (let j = 0; j < count; j++) {
@@ -486,7 +535,7 @@ async function run() {
       if (k) {
         let s = performance.now();
         step = `running Wav2Lip on frames ${i + 1}-${i + count}`;
-        const pred = await infer(state, melBuf, faceBuf);
+        const pred = await runAll(state, melBuf, faceBuf, k);
         step = 'rendering frames';
         bt.model = performance.now() - s; s = performance.now();
         const img = pctx.createImageData(IMG, IMG);
@@ -516,7 +565,7 @@ async function run() {
       bt.encode = performance.now() - s3;
       t.detect += bt.detect; t.model += bt.model; t.other += bt.decode + bt.prep + bt.paste + bt.encode;
       const done = i + count, el = (performance.now() - t0) / 1000;
-      L.debug(`batch ${i / B + 1}/${Math.ceil(n / B)} frames ${i + 1}-${done}: faces ${k}/${count} · ms decode ${bt.decode.toFixed(0)} detect ${bt.detect.toFixed(0)} prep ${bt.prep.toFixed(0)} model ${bt.model.toFixed(0)} paste ${bt.paste.toFixed(0)} encode ${bt.encode.toFixed(0)} ${memory()}`);
+      L.debug(`round ${i / W + 1}/${Math.ceil(n / W)} [${state.m.accelerator}] frames ${i + 1}-${done}: faces ${k}/${count} · ms decode ${bt.decode.toFixed(0)} detect ${bt.detect.toFixed(0)} prep ${bt.prep.toFixed(0)} model ${bt.model.toFixed(0)} paste ${bt.paste.toFixed(0)} encode ${bt.encode.toFixed(0)} ${memory()}`);
       progress(done / n);
       status(`Frame ${done} of ${n}`);
       $('fps-out').textContent = (done / el).toFixed(1);
