@@ -2,6 +2,10 @@
 
 Handles float models and fully quantized ones (int8 / int16 I/O) the same way:
 callers always pass and receive float32.
+
+Batching: the batch size is baked into the model at conversion. On CPU, batch 8
+was ~25% faster per frame than batch 1 (BENCHMARKS.md); batch 1 gives the lowest
+latency for live use.
 """
 
 import numpy as np

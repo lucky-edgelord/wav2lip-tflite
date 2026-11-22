@@ -6,6 +6,12 @@
 With --calib, inputs are real face/mel samples (much more telling than noise).
 PSNR above ~40 dB is visually indistinguishable on a 96x96 mouth crop;
 below ~30 dB expect visible banding or colour shift.
+
+Reference (CPU-only Linux, batch 8, real wav2lip_gan weights, real calibration inputs):
+  fp32   145 MB   90 ms/frame   139 dB
+  int8w   37 MB   94 ms/frame    55 dB   (smaller file, no speed-up)
+  int8    37 MB   18 ms/frame    46 dB   (~5x faster, visually identical)
+See BENCHMARKS.md.
 """
 
 import argparse

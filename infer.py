@@ -5,6 +5,12 @@
 
 Pipeline per frame: MediaPipe BlazeFace box -> pad + smooth -> 96x96 crop
 -> Wav2Lip (LiteRT, GPU if available) -> resize -> paste back.
+
+Reference speed (CPU-only Linux, 640x640 @ 25 fps, batch 8; see BENCHMARKS.md):
+  fp32: 9.3 fps  = detect 5.1 + wav2lip 97.1 + other 5.3 ms/frame
+  int8: 32.2 fps = detect 4.8 + wav2lip 21.1 + other 5.1 ms/frame
+With INT8 the non-model work is about a third of frame time, so that is the
+next thing to optimise (threads, Rust, or GPU-side pre/post-processing).
 """
 
 import argparse

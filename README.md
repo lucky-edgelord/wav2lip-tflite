@@ -86,11 +86,24 @@ Model I/O:
 | `args_1` | (B, 96, 96, 6) | lower-half-masked BGR crop ‖ reference BGR crop, / 255 |
 | `output_0` | (B, 96, 96, 3) | BGR, 0–1 |
 
+## Benchmarks
+
+Measured on a CPU-only Linux sandbox with the real `wav2lip_gan` weights (full tables in
+[BENCHMARKS.md](BENCHMARKS.md)):
+
+| model | size | Wav2Lip ms/frame | end-to-end fps | PSNR vs PyTorch |
+|---|---:|---:|---:|---:|
+| `fp32` | 145 MB | 90–97 | 9.3 | 139 dB |
+| `int8w` | 37 MB | 94 | – | 55 dB |
+| `int8` (calibrated) | 37 MB | 18–21 | 32.2 | 46 dB |
+
+Metal (M1) numbers still to be added.
+
 ## Status
 
-Verified on Linux (CPU only, no GPU available) with random weights: conversion at every precision, TFLite output
-matching PyTorch to ~1e-7 (FP32), MediaPipe detection and the full video pipeline. **Not yet verified:** quality with
-the real checkpoints and Metal GPU speed. Run `compare.py` with your checkpoint and `--accelerator gpu` on the Mac to get both.
+Verified on Linux (CPU only) with the real `wav2lip_gan` weights: conversion at every precision, output matching
+PyTorch, and a full lip-sync run on a real clip (lips checked frame by frame). **Not yet verified:** Metal GPU speed.
+Run `compare.py --accelerator gpu` on the Mac to get it.
 
 ## License
 
