@@ -67,6 +67,11 @@ Tuning:
 - `--smooth 0.6`: EMA on the box between frames. Raise it if the mouth jitters, lower it for fast head motion.
 - `--accelerator gpu|cpu|npu`: falls back to CPU automatically if the accelerator isn't available.
 
+## Web version
+
+`web/` runs the same pipeline in the browser with LiteRT.js (WebGPU) and MediaPipe: upload a face video,
+driving audio and the converted model, get an MP4 back. See [web/README.md](web/README.md).
+
 ## How the conversion works
 
 - `w2l/model.py` re-implements the Wav2Lip generator with the original module names so checkpoints load directly.

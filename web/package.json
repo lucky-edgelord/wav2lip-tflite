@@ -1,0 +1,16 @@
+{
+  "name": "wav2lip-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@litertjs/core": "2.6.0",
+    "@mediapipe/tasks-vision": "1.2.3",
+    "mediabunny": "1.66.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

@@ -41,6 +41,18 @@ What this says about where to optimise next:
   kernels, starts to pay off.
 - MediaPipe BlazeFace on CPU costs ~5 ms/frame at 640×640; it is not the bottleneck.
 
+## Browser (`web/`, LiteRT.js)
+
+Same clip, batch 8 FP32 model, headless Chrome 153 on the same CPU-only machine:
+
+| backend | throughput | Wav2Lip | detect | other |
+|---|---:|---:|---:|---:|
+| CPU (Wasm) | 3.1 fps | 245 ms/frame | 68 ms/frame* | 8 ms/frame |
+| WebGPU via SwiftShader (software) | 0.4 fps | 2429 ms/frame | 228 ms/frame* | 11 ms/frame |
+
+\* MediaPipe ran its "GPU" delegate on software WebGL here; on real hardware detection is a few ms.
+Wasm is ~2.7× slower than native XNNPACK on the same machine. These are floor numbers; measure on a real GPU.
+
 ## Conversion facts
 
 - Converted graph ops: `CONV_2D` 45, `ADD` 28, `SLICE` 10, `PAD` 9, `CONCATENATION` 7,
