@@ -23,6 +23,18 @@ You can still load your own fp32/int8w model under Settings.
 - **Audio features**: `src/mel.js`, a port of `w2l/audio.py` (matches librosa to 2e-5)
 - **Video in/out**: [Mediabunny](https://mediabunny.dev) on WebCodecs (H.264 + AAC/Opus MP4)
 
+## Log console
+
+The **Log** button (bottom right) opens a built-in console: every step with timings, an environment
+report (browser, device, WebGPU adapter, WebCodecs, storage, connection), download progress and
+retries, per-batch timings in **Verbose**, console output from LiteRT.js/MediaPipe, and full error
+details with stack traces. It opens by itself on an error. **Copy** or **Save .txt** to share a log.
+
+Failure handling: model download retries (3×, 15 s stall watchdog) and is cached on the device;
+picked files are read into memory immediately; audio falls back from Web Audio to WebCodecs;
+the face detector falls back from GPU to CPU and restarts if it fails mid-run; Wav2Lip falls back
+from WebGPU to CPU at load or mid-run; the screen is kept awake while rendering.
+
 ## Run locally
 
 ```bash

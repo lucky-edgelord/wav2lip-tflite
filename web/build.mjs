@@ -4,6 +4,11 @@
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, rmSync, existsSync, createWriteStream } from 'fs';
 import { get } from 'https';
+import { execSync } from 'child_process';
+
+let sha = 'local';
+try { sha = execSync('git rev-parse --short HEAD').toString().trim(); } catch {}
+const BUILD = `${sha} · built ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 
 const out = 'dist';
 rmSync(out, { recursive: true, force: true });
@@ -15,6 +20,7 @@ mkdirSync(`${out}/assets`, { recursive: true });
 await build({
   entryPoints: ['src/app.js'], bundle: true, format: 'esm', minify: true,
   target: 'es2022', outfile: `${out}/app.js`, legalComments: 'none',
+  define: { __BUILD__: JSON.stringify(BUILD) },
 });
 cpSync('index.html', `${out}/index.html`);
 

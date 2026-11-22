@@ -95,6 +95,24 @@ label.f input,label.f select{font:inherit;font-size:16px;color:var(--ink);backgr
 .dl.ok{border-color:rgba(5,217,232,.5);padding-block:8px}.dl.ok .dl-track{display:none}.dl.ok #dl-title{color:var(--cyan)}
 .dl.err{border-color:var(--pink)}.dl.err #dl-title{color:var(--pink)}.dl.err .dl-track,.dl.err #dl-num{display:none}
 #retry{margin-top:10px;border-color:var(--pink);color:var(--pink)}
+#status.err{color:var(--pink)}
+#open-log{margin-top:6px;border-color:var(--pink);color:var(--pink);min-height:40px;font-size:14px}
+.log-btn{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));z-index:40;font:600 14px "Chakra Petch",sans-serif;min-height:44px;padding:0 16px;
+background:rgba(7,6,13,.92);color:var(--cyan);border:1px solid var(--cyan);box-shadow:0 0 16px rgba(5,217,232,.3);cursor:pointer;display:flex;gap:8px;align-items:center}
+.log-btn .badge:empty{display:none}
+.log-btn .badge{font:500 12px "JetBrains Mono",monospace;padding:2px 6px;background:var(--line);color:var(--ink)}
+.log-btn .badge.warn{background:var(--yellow);color:#07060d}.log-btn .badge.error{background:var(--pink);color:#07060d}
+.log-drawer{position:fixed;left:0;right:0;bottom:0;height:min(72vh,640px);z-index:50;display:flex;flex-direction:column;background:#07060d;
+border-top:2px solid var(--cyan);box-shadow:0 -10px 40px rgba(5,217,232,.18);padding-bottom:env(safe-area-inset-bottom)}
+.log-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px max(12px,3vw);border-bottom:1px solid var(--line)}
+.log-bar strong{color:var(--pink);font-size:14px;margin-right:auto}
+.log-bar select,.log-bar button{font:600 14px "Chakra Petch",sans-serif;min-height:40px;padding:0 12px;background:#0b0a14;color:var(--ink);border:1px solid var(--line);cursor:pointer}
+.log-bar button:hover{border-color:var(--cyan);color:var(--cyan)}
+.log-note{width:100%;font-size:12px;color:var(--cyan);min-height:0}
+.log-note:empty{display:none}
+.log-list{flex:1;overflow:auto;padding:8px max(12px,3vw) 72px;font:12px/1.5 "JetBrains Mono",ui-monospace,monospace;-webkit-overflow-scrolling:touch}
+.ll{white-space:pre-wrap;overflow-wrap:anywhere;padding:1px 0;color:var(--ink)}
+.ll.debug{color:var(--muted)}.ll.warn{color:var(--yellow)}.ll.error{color:var(--pink);background:rgba(255,42,109,.08)}
 footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
 footer p{margin:0 0 6px;max-width:80ch}
 footer a{color:var(--cyan)}
@@ -147,6 +165,7 @@ footer a{color:var(--cyan)}
       </div>
       <div class="track"><div class="bar" id="bar"></div></div>
       <p id="status" role="status" aria-live="polite"></p>
+      <button class="btn" id="open-log" type="button" hidden>Open log</button>
       <div class="stats">
         <div><b id="fps-out">--</b><span>frames / s</span></div>
         <div><b id="ms-model">--</b><span>Wav2Lip ms</span></div>
