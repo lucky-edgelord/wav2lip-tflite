@@ -1,8 +1,9 @@
 """Face boxes from MediaPipe's Face Detector (BlazeFace short-range).
 
-BlazeFace boxes are tighter than the S3FD boxes Wav2Lip was trained with, so
-we pad them (mostly downward, to keep the chin) and smooth them over time to
-stop the pasted mouth from jittering.
+BlazeFace's box already spans roughly eyebrows to chin, which is close to the
+S3FD crops Wav2Lip was trained on, so it needs only a little padding below the
+chin. Too much padding moves the mouth within the 96x96 crop and the model then
+draws the new lips on the chin. Boxes are smoothed over time to stop jitter.
 """
 
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ BLAZEFACE_URL = ("https://storage.googleapis.com/mediapipe-models/face_detector/
 @dataclass
 class BoxParams:
     # Padding as a fraction of box height/width: (top, bottom, left, right).
-    pad: tuple[float, float, float, float] = (0.05, 0.20, 0.05, 0.05)
+    pad: tuple[float, float, float, float] = (0.0, 0.05, 0.0, 0.0)
     smooth: float = 0.6          # EMA weight on the previous box (0 = no smoothing)
     min_confidence: float = 0.5
 

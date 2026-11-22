@@ -61,8 +61,9 @@ python infer.py --face input.mp4 --audio speech.wav \
 can see where the time goes.
 
 Tuning:
-- `--pad TOP BOTTOM LEFT RIGHT`: box padding as a fraction of the face box. BlazeFace boxes are tighter
-  than the S3FD boxes Wav2Lip was trained with; the default adds 20% below to keep the chin.
+- `--pad TOP BOTTOM LEFT RIGHT`: box padding as a fraction of the face box (default `0 0.05 0 0`).
+  Keep it small: Wav2Lip expects the mouth at a fixed spot in its 96×96 crop, and with too much
+  padding it draws the new lips on the chin. If lips look smeared or doubled, reduce the bottom pad.
 - `--smooth 0.6`: EMA on the box between frames. Raise it if the mouth jitters, lower it for fast head motion.
 - `--accelerator gpu|cpu|npu`: falls back to CPU automatically if the accelerator isn't available.
 
