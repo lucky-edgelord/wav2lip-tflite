@@ -9,6 +9,7 @@ import {
 import { melspectrogram, melChunkStarts, writeMelChunk, SAMPLE_RATE } from './mel.js';
 import { W4 } from './w4.js';
 import { W4GPU } from './w4gpu.js';
+import { W4GL } from './w4gl.js';
 
 /* global __BUILD__, __MANIFEST__, __WASM_ST_B64__, __WORKER__ */
 const BUILD = typeof __BUILD__ === 'string' ? __BUILD__ : 'dev';
@@ -287,12 +288,24 @@ async function ensureEngine() {
     await L.step(`load Wav2Lip INT4 (${tag})`, () => eng.loadModel(0, w2l, W));
     await L.step(`load BlazeFace INT4 (${tag})`, () => eng.loadModel(1, blaze, W));
   };
-  let gpu = null, cpu = null;
-  if (force !== 'cpu' && navigator.gpu) {
-    try { gpu = await L.step('start WebGPU engine (INT4 dequantized in the shader)', () => W4GPU.create({ log: (m) => L.info(m) })); await loadInto(gpu, 'GPU'); }
-    catch (err) { L.warn('WebGPU unavailable:', err); gpu = null; }
+  // Preference order: WebGPU -> WebGL2 -> WASM threads. Each GPU path is only kept if it survives a real run.
+  const z = [new Float32Array(4 * 1280), new Float32Array(4 * 221184)];
+  const bench = async (e) => { await e.run(0, z, 1); const t = performance.now(); await e.run(0, z, 4); return (performance.now() - t) / 4; };
+  const gpus = [];
+  for (const [name, mk, ok] of [['WebGPU', () => W4GPU.create({ log: (m) => L.info(m) }), !!navigator.gpu && force !== 'webgl'],
+                                 ['WebGL2', () => W4GL.create({ log: (m) => L.info(m) }), force !== 'gpu' && true]]) {
+    if (force === 'cpu' || !ok) continue;
+    if (force === 'gpu' && gpus.length) break;
+    try {
+      const e = await L.step(`start ${name} engine (INT4 dequantized in the shader)`, mk);
+      await loadInto(e, name); e.ms = force ? 0 : await bench(e); e.tag = name; gpus.push(e);
+      L.info(`${name}: ${e.ms.toFixed(0)} ms/frame`);
+      if (force === 'webgl' || force === 'gpu') break;
+      if (name === 'WebGPU' && e.ms < 400) break;   // a working, reasonably fast WebGPU: no need to also try WebGL
+    } catch (err) { L.warn(`${name} unavailable:`, err); }
   }
-  if (force !== 'gpu' || !gpu) {
+  let gpu = gpus.length ? gpus.reduce((x, y) => (y.ms < x.ms ? y : x)) : null, cpu = null;
+  if (!gpu || (force !== 'gpu' && force !== 'webgl')) {
     const b64 = typeof __WASM_ST_B64__ !== 'undefined' ? __WASM_ST_B64__ : null;
     const wasm = b64 ? Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer
       : await L.step('fetch engine (w4_st.wasm)', async () => (await fetch(base('./assets/w4_st.wasm'))).arrayBuffer());
@@ -306,18 +319,14 @@ async function ensureEngine() {
     await loadInto(cpu, 'CPU'); cpu.backend = 'wasm';
   }
   let pick = gpu || cpu;
-  if (gpu && cpu && !force) {   // both work: time one small batch on each and keep the faster
-    const z = [new Float32Array(4 * 1280), new Float32Array(4 * 221184)], bench = async (e) => { await e.run(0, z, 1); const t = performance.now(); await e.run(0, z, 4); return (performance.now() - t) / 4; };
-    let tg = Infinity;
-    try { tg = await bench(gpu); } catch (err) { L.warn('WebGPU failed during the benchmark, using the CPU engine:', err); }
+  if (gpu && cpu && !force) {
     const tc = await bench(cpu);
-    L.info(`backend benchmark: WebGPU ${tg.toFixed(0)} ms/frame, WASM x${cpu.threads} ${tc.toFixed(0)} ms/frame`);
-    pick = tg < tc ? gpu : cpu;
-  } else if (force === 'gpu' && gpu) pick = gpu;
-  const lose = pick === gpu ? cpu : gpu;
-  if (lose) { try { lose.workers?.forEach((w) => w.terminate()); lose.device?.destroy(); } catch {} }
-  L.info(`INT4 engine ready: ${pick.backend === 'webgpu' ? 'WebGPU (' + pick.name + ')' : `WASM SIMD x${pick.threads}`}`);
-  const cn = $('cpu-note'); cn.textContent = pick.backend === 'webgpu' ? 'WebGPU compute' : `WASM SIMD · ${pick.threads} threads`; cn.classList.add('ok');
+    L.info(`backend benchmark: ${gpu.tag} ${gpu.ms.toFixed(0)} ms/frame, WASM x${cpu.threads} ${tc.toFixed(0)} ms/frame`);
+    pick = gpu.ms < tc ? gpu : cpu;
+  }
+  for (const e of [...gpus, cpu]) if (e && e !== pick) { try { e.workers?.forEach((w) => w.terminate()); e.device?.destroy(); e.gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch {} }
+  L.info(`INT4 engine ready: ${pick.backend === 'wasm' ? `WASM SIMD x${pick.threads}` : `${pick.tag} (${pick.name})`}`);
+  const cn = $('cpu-note'); cn.textContent = pick.backend === 'wasm' ? `WASM SIMD · ${pick.threads} threads` : `${pick.tag} compute`; cn.classList.add('ok');
   return (engine = pick);
 }
 
@@ -398,7 +407,7 @@ async function run() {
     const starts = melChunkStarts(mel.frames, fps);
     const n = starts.length;
     L.info(`Plan: ${n} frames at ${fps} fps, rounds of ${W}, output ${src.w}×${src.h}`);
-    $('acc').textContent = `Wav2Lip + BlazeFace INT4 · ${engine && engine.backend === 'webgpu' ? 'WebGPU compute shaders' : `C engine on WebAssembly SIMD · ${engine ? engine.threads : THREADS} thread(s)`}`;
+    $('acc').textContent = `Wav2Lip + BlazeFace INT4 · ${engine && engine.backend !== 'wasm' ? `${engine.tag} compute shaders` : `C engine on WebAssembly SIMD · ${engine ? engine.threads : THREADS} thread(s)`}`;
 
     view.width = src.w; view.height = src.h;
     hud(`${src.w}×${src.h} · ${fps} FPS`);
