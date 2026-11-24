@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wav2Lip // Neural Sync</title>
+<link rel="icon" href="data:,">
+<script>
+// Enable cross-origin isolation (multithreaded CPU inference) through coi-sw.js, then reload once.
+(function () {
+  if (self.crossOriginIsolated || !('serviceWorker' in navigator) || !window.isSecureContext || !('credentialless' in window)) return;
+  navigator.serviceWorker.register('./coi-sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () {
+    var k = 'coi-reloaded'; var done; try { done = sessionStorage.getItem(k); sessionStorage.setItem(k, '1'); } catch (e) { done = '1'; }
+    if (!done && !self.crossOriginIsolated) location.reload();
+  }).catch(function (e) { console.warn('Isolation service worker not registered:', e); });
+})();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* VOICE: night-city netrunner rig: confident, terse, fast.
+   IDEA: a cyberdeck's monitor: a live video feed in a bracketed HUD frame, with a jack panel of inputs beside it.
+   PICTURE: the feed itself, framed by neon corner brackets, a scan sweep while it renders, telemetry under it.
+   COLOUR and TYPE: void black, magenta and cyan neon, signal yellow only on the run button; Chakra Petch, mono digits.
+   LAYOUT: compact masthead, feed left (wide), jack panel right; stacked feed-first on phones. */
+:root{color-scheme:dark;--bg:#07060d;--panel:#0f0d1a;--line:#2a2540;--ink:#ece9ff;--muted:#8d87ad;
+--pink:#ff2a6d;--cyan:#05d9e8;--yellow:#f9f002;--cut:14px}
+*{box-sizing:border-box;min-width:0}
+[hidden]{display:none!important}
+html{background:var(--bg)}
+body{margin:0;color:var(--ink);font:16px/1.55 "Chakra Petch",system-ui,sans-serif;overflow-x:clip;min-height:100vh;
+background:radial-gradient(80% 60% at 85% -10%,rgba(255,42,109,.22),transparent 60%),radial-gradient(70% 50% at -10% 30%,rgba(5,217,232,.14),transparent 60%),
+linear-gradient(rgba(5,217,232,.05) 1px,transparent 1px) 0 0/100% 32px,linear-gradient(90deg,rgba(5,217,232,.05) 1px,transparent 1px) 0 0/32px 100%,var(--bg)}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(rgba(0,0,0,.18) 0 1px,transparent 1px 3px);mix-blend-mode:multiply}
+.band{padding:clamp(20px,3.5vw,48px) max(5vw,16px);max-width:1240px;margin:0 auto}
+.cut{clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:end;justify-content:space-between}
+h1{margin:0;font-size:clamp(32px,5vw,52px);line-height:1.05;font-weight:700;letter-spacing:.01em;text-transform:uppercase;
+text-shadow:2px 0 var(--pink),-2px 0 var(--cyan),0 0 24px rgba(255,42,109,.45)}
+h1 span{color:var(--cyan);text-shadow:0 0 18px rgba(5,217,232,.6)}
+header p{margin:6px 0 0;color:var(--muted);max-width:56ch}
+.sys{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:13px;padding:6px 12px;border:1px solid var(--line);background:rgba(15,13,26,.8);color:var(--muted);white-space:nowrap}
+.chip.ok{color:var(--cyan);border-color:rgba(5,217,232,.5);box-shadow:0 0 12px rgba(5,217,232,.25) inset}
+main{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:clamp(18px,3vw,36px);margin-top:28px;align-items:start}
+.feed{position:relative;padding:10px;background:linear-gradient(135deg,rgba(255,42,109,.55),rgba(5,217,232,.55))}
+.stage{position:relative;aspect-ratio:1/1;background:#030208;display:grid;place-items:center;overflow:hidden}
+.stage canvas,.stage video{width:100%;height:100%;object-fit:contain;display:block}
+.stage:not(.ready) canvas{display:none}
+.hud{position:absolute;left:14px;top:12px;font:500 12px/1 "JetBrains Mono",monospace;color:var(--cyan);text-shadow:0 0 8px rgba(5,217,232,.8);pointer-events:none;z-index:2}
+.hud.r{left:auto;right:14px;color:var(--pink);text-shadow:0 0 8px rgba(255,42,109,.8)}
+.stage::before,.stage::after{content:"";position:absolute;width:34px;height:34px;z-index:2;pointer-events:none}
+.stage::before{left:8px;bottom:8px;border-left:2px solid var(--cyan);border-bottom:2px solid var(--cyan)}
+.stage::after{right:8px;bottom:8px;border-right:2px solid var(--pink);border-bottom:2px solid var(--pink)}
+.sweep{position:absolute;left:0;right:0;height:22%;top:-22%;background:linear-gradient(transparent,rgba(5,217,232,.16),rgba(5,217,232,.4) 96%,transparent);pointer-events:none;opacity:0;z-index:1}
+.busy .sweep{opacity:1;animation:sweep 2.4s linear infinite}
+@keyframes sweep{to{top:100%}}
+.empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:var(--muted)}
+.empty svg{width:min(56%,280px);height:auto;display:block;margin:0 auto 12px}
+.stage.ready .empty{display:none}
+.track{height:8px;margin-top:14px;background:var(--panel);border:1px solid var(--line)}
+.bar{height:100%;width:0;background:repeating-linear-gradient(90deg,var(--pink) 0 10px,transparent 10px 13px);box-shadow:0 0 14px rgba(255,42,109,.7);transition:width .2s}
+#status{margin:10px 0 0;min-height:1.55em;font-family:"JetBrains Mono",monospace;font-size:14px;color:var(--cyan)}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+.stats div{background:var(--panel);border:1px solid var(--line);padding:10px 12px}
+.stats b{display:block;font:500 clamp(20px,2.4vw,28px)/1.1 "JetBrains Mono",monospace;color:var(--ink);font-variant-numeric:tabular-nums}
+.stats div:first-child b{color:var(--yellow);text-shadow:0 0 12px rgba(249,240,2,.5)}
+.stats span{font-size:13px;color:var(--muted)}
+#acc{font-size:13px;color:var(--muted);margin-top:10px}
+.panel{background:rgba(15,13,26,.88);border:1px solid var(--line);padding:clamp(16px,2vw,24px);backdrop-filter:blur(6px)}
+.panel h2{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--pink)}
+.pick{position:relative;display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:12px;align-items:center;padding:14px;margin-top:10px;background:#0b0a14;border:1px solid var(--line);cursor:pointer;transition:border-color .15s}
+.pick:hover,.pick.over{border-color:var(--cyan)}
+.pick.has{border-color:rgba(5,217,232,.6);box-shadow:0 0 0 1px rgba(5,217,232,.15),0 0 18px rgba(5,217,232,.12) inset}
+.pick .n{width:40px;height:40px;display:grid;place-items:center;font:500 15px "JetBrains Mono",monospace;color:var(--bg);background:var(--cyan)}
+.pick.has .n{background:var(--pink)}
+.pick strong{display:block;font-weight:600}
+.pick .name{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.pick.has .name{color:var(--cyan)}
+.pick input{position:absolute;width:1px;height:1px;opacity:0}
+.btn{font:inherit;font-size:16px;font-weight:600;min-height:44px;padding:0 18px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);cursor:pointer;white-space:nowrap}
+.btn:hover{background:rgba(5,217,232,.1)}
+.pick .btn{min-height:38px;font-size:14px;padding:0 12px;display:inline-grid;place-items:center}
+:focus-visible,.pick:focus-within{outline:2px solid var(--yellow);outline-offset:3px}
+.go{width:100%;margin-top:18px;min-height:56px;font-size:18px;font-weight:700;background:var(--yellow);color:#07060d;border:0;text-transform:uppercase;letter-spacing:.04em;box-shadow:0 0 24px rgba(249,240,2,.35)}
+.go:hover{background:#fff95a}
+.go:disabled{background:#1b1930;color:var(--muted);box-shadow:none;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.row .btn{flex:1}
+#save{border-color:var(--pink);color:var(--pink)}
+details{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+summary{cursor:pointer;font-weight:600;min-height:32px;color:var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+label.f{font-size:13px;color:var(--muted);display:grid;gap:4px}
+label.f input,label.f select{font:inherit;font-size:16px;color:var(--ink);background:#0b0a14;border:1px solid var(--line);min-height:44px;padding:0 10px;width:100%}
+.hint{font-size:13px;color:var(--muted);margin:12px 0 0}
+.hint a{color:var(--cyan)}
+.dl{margin-top:18px;padding:12px 14px;max-width:760px;background:#0b0a14;border:1px solid var(--line)}
+.dl-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:14px;font-weight:600}
+#dl-num{font:500 13px "JetBrains Mono",monospace;color:var(--cyan);white-space:nowrap}
+.dl-track{height:6px;margin-top:8px;background:#1b1930}
+.dl-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--pink));box-shadow:0 0 10px rgba(5,217,232,.6);transition:width .15s}
+.dl-src{font-size:12px;color:var(--muted);margin-top:6px;overflow-wrap:anywhere}
+.dl.ok{border-color:rgba(5,217,232,.5);padding-block:8px}.dl.ok .dl-track{display:none}.dl.ok #dl-title{color:var(--cyan)}
+.dl.err{border-color:var(--pink)}.dl.err #dl-title{color:var(--pink)}.dl.err .dl-track,.dl.err #dl-num{display:none}
+#retry{margin-top:10px;border-color:var(--pink);color:var(--pink)}
+#status.err{color:var(--pink)}
+#open-log{margin-top:6px;border-color:var(--pink);color:var(--pink);min-height:40px;font-size:14px}
+.log-btn{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));z-index:40;font:600 14px "Chakra Petch",sans-serif;min-height:44px;padding:0 16px;
+background:rgba(7,6,13,.92);color:var(--cyan);border:1px solid var(--cyan);box-shadow:0 0 16px rgba(5,217,232,.3);cursor:pointer;display:flex;gap:8px;align-items:center}
+.log-btn .badge:empty{display:none}
+.log-btn .badge{font:500 12px "JetBrains Mono",monospace;padding:2px 6px;background:var(--line);color:var(--ink)}
+.log-btn .badge.warn{background:var(--yellow);color:#07060d}.log-btn .badge.error{background:var(--pink);color:#07060d}
+.log-drawer{position:fixed;left:0;right:0;bottom:0;height:min(72vh,640px);z-index:50;display:flex;flex-direction:column;background:#07060d;
+border-top:2px solid var(--cyan);box-shadow:0 -10px 40px rgba(5,217,232,.18);padding-bottom:env(safe-area-inset-bottom)}
+.log-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px max(12px,3vw);border-bottom:1px solid var(--line)}
+.log-bar strong{color:var(--pink);font-size:14px;margin-right:auto}
+.log-bar select,.log-bar button{font:600 14px "Chakra Petch",sans-serif;min-height:40px;padding:0 12px;background:#0b0a14;color:var(--ink);border:1px solid var(--line);cursor:pointer}
+.log-bar button:hover{border-color:var(--cyan);color:var(--cyan)}
+.log-note{width:100%;font-size:12px;color:var(--cyan);min-height:0}
+.log-note:empty{display:none}
+.log-list{flex:1;overflow:auto;padding:8px max(12px,3vw) 72px;font:12px/1.5 "JetBrains Mono",ui-monospace,monospace;-webkit-overflow-scrolling:touch}
+.ll{white-space:pre-wrap;overflow-wrap:anywhere;padding:1px 0;color:var(--ink)}
+.ll.debug{color:var(--muted)}.ll.warn{color:var(--yellow)}.ll.error{color:var(--pink);background:rgba(255,42,109,.08)}
+footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+footer p{margin:0 0 6px;max-width:80ch}
+footer a{color:var(--cyan)}
+@media(max-width:860px){main{grid-template-columns:minmax(0,1fr)}header{align-items:start}}
+@media(max-width:520px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:minmax(0,1fr)}}
+@media(prefers-reduced-motion:reduce){.busy .sweep{animation:none;opacity:0}.bar{transition:none}}
+</style>
+</head>
+<body>
+<div class="band">
+  <header>
+    <div>
+      <h1>Wav2Lip <span>//</span> Neural Sync</h1>
+      <p>Drop a face and a voice. The rig finds the face, re-synthesises the mouth with an INT8 Wav2Lip model and renders an MP4, all on your own hardware.</p>
+    </div>
+    <div class="sys">
+      <span class="chip" id="cpu-note">CPU</span>
+      <span class="chip" id="model-state">Model: loading…</span>
+    </div>
+  </header>
+  <div class="dl" id="dl" aria-live="polite">
+    <div class="dl-head"><span id="dl-title">Preparing model download…</span><span id="dl-num"></span></div>
+    <div class="dl-track"><div class="dl-bar" id="dl-bar"></div></div>
+    <div class="dl-src" id="dl-src"></div>
+    <button class="btn" id="retry" hidden>Retry download</button>
+  </div>
+
+  <main>
+    <section aria-label="Video feed">
+      <div class="feed cut">
+        <div class="stage cut" id="stage">
+          <span class="hud">FEED</span><span class="hud r" id="hud-r">STANDBY</span>
+          <canvas id="view" aria-label="Current frame"></canvas>
+          <video id="result" controls playsinline hidden></video>
+          <div class="sweep"></div>
+          <div class="empty">
+            <div>
+              <svg viewBox="0 0 200 200" aria-hidden="true">
+                <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#05d9e8"/><stop offset="1" stop-color="#ff2a6d"/></linearGradient></defs>
+                <ellipse cx="100" cy="88" rx="46" ry="58" fill="none" stroke="url(#g)" stroke-width="2"/>
+                <path d="M54 88h92M100 30v116" stroke="#2a2540" stroke-width="1"/>
+                <circle cx="82" cy="78" r="5" fill="#05d9e8"/><circle cx="118" cy="78" r="5" fill="#05d9e8"/>
+                <path d="M78 116 Q100 136 122 116" fill="none" stroke="#f9f002" stroke-width="4" stroke-linecap="round"/>
+                <path d="M30 170h20M60 170h8M78 170h44M132 170h8M150 170h20" stroke="#ff2a6d" stroke-width="3"/>
+              </svg>
+              Awaiting face input
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="track"><div class="bar" id="bar"></div></div>
+      <p id="status" role="status" aria-live="polite"></p>
+      <button class="btn" id="open-log" type="button" hidden>Open log</button>
+      <div class="stats">
+        <div><b id="fps-out">--</b><span>frames / s</span></div>
+        <div><b id="ms-model">--</b><span>Wav2Lip ms</span></div>
+        <div><b id="ms-detect">--</b><span>detect ms</span></div>
+        <div><b id="ms-other">--</b><span>other ms</span></div>
+      </div>
+      <div id="acc"></div>
+    </section>
+
+    <section class="panel cut" aria-label="Inputs">
+      <h2>Jack in</h2>
+      <label class="pick" data-kind="face">
+        <span class="n">01</span>
+        <span><strong>Face</strong><span class="name">Video or photo of the speaker</span></span>
+        <span class="btn">Load</span>
+        <input type="file" accept="video/*,image/*">
+      </label>
+      <label class="pick" data-kind="audio">
+        <span class="n">02</span>
+        <span><strong>Voice</strong><span class="name">Speech audio, or a video with sound</span></span>
+        <span class="btn">Load</span>
+        <input type="file" accept="audio/*,video/*">
+      </label>
+
+      <button class="btn go cut" id="run" disabled>Sync lips</button>
+      <div class="row">
+        <button class="btn" id="cancel" hidden>Abort</button>
+        <button class="btn" id="save" hidden>Save MP4</button>
+      </div>
+
+      <details>
+        <summary>Settings</summary>
+        <div class="grid">
+          <label class="f">Output fps (blank = source)
+            <input id="fps" type="number" min="1" max="60" step="1" placeholder="auto" inputmode="numeric">
+          </label>
+          <label class="f">Padding below chin
+            <input id="pad" type="number" min="0" max="0.5" step="0.01" value="0.05">
+          </label>
+          <label class="f">Box smoothing (0–0.95)
+            <input id="smooth" type="number" min="0" max="0.95" step="0.05" value="0.6">
+          </label>
+          <label class="f">Max output width (px)
+            <input id="maxw" type="number" min="256" max="3840" step="2" value="1280">
+          </label>
+        </div>
+        <p class="hint">Lips smeared or doubled: lower the padding. Mouth jittering: raise the smoothing.</p>
+        <label class="pick" data-kind="model">
+          <span class="n">03</span>
+          <span><strong>Own model (optional)</strong><span class="name">fp32 or int8w .tflite from scripts/convert.py</span></span>
+          <span class="btn">Load</span>
+          <input type="file" accept=".tflite">
+        </label>
+        <p class="hint"><a href="#" id="clear-model">Use the built-in INT8 model again</a></p>
+      </details>
+      <p class="hint">Runs a full-INT8 Wav2Lip on your CPU, multithreaded (up to 4 threads on phones). The model is about 37 MB and downloaded once.</p>
+    </section>
+  </main>
+</div>
+<footer class="band">
+  <p>Source: <a href="https://github.com/lucky-edgelord/wav2lip-tflite">wav2lip-tflite</a>. LiteRT.js runs Wav2Lip, MediaPipe BlazeFace finds faces, Mediabunny writes the MP4.</p>
+  <p>Wav2Lip weights are licensed by their authors for research and non-commercial use only.</p>
+</footer>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

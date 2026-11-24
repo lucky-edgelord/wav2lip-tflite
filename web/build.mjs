@@ -18,11 +18,12 @@ mkdirSync(`${out}/models`, { recursive: true });
 mkdirSync(`${out}/assets`, { recursive: true });
 
 await build({
-  entryPoints: ['src/app.js'], bundle: true, format: 'esm', minify: true,
-  target: 'es2022', outfile: `${out}/app.js`, legalComments: 'none',
+  entryPoints: { app: 'src/app_litert.js', int4: 'src/int4.js', w4worker: 'src/w4worker.js' }, bundle: true, format: 'esm', minify: true,
+  target: 'es2022', outdir: out, legalComments: 'none',
   define: { __BUILD__: JSON.stringify(BUILD) },
 });
 cpSync('index.html', `${out}/index.html`);
+cpSync('litert.html', `${out}/litert.html`);
 cpSync('coi-sw.js', `${out}/coi-sw.js`); // must sit at the site root to control the page
 
 // LiteRT.js picks the relaxed-SIMD, compat or (when cross-origin isolated) threaded build at runtime.

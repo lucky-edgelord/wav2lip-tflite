@@ -1,0 +1,12 @@
+{
+ "w2l": {
+  "file": "w2l_w4.bin",
+  "bytes": 20490828,
+  "label": "Wav2Lip INT4"
+ },
+ "blaze": {
+  "file": "blaze_w4.bin",
+  "bytes": 90432,
+  "label": "BlazeFace INT4"
+ }
+}

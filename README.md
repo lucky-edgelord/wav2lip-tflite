@@ -124,3 +124,8 @@ Run `compare.py --accelerator gpu` on the Mac to get it.
 
 This code is MIT. The Wav2Lip **weights** are released by their authors for research/non-commercial use only;
 check their license before shipping anything built on them.
+
+
+## Live demo (INT4 · C engine in WASM · 4 threads)
+
+https://lucky-edgelord.github.io/wav2lip-tflite/ — Wav2Lip and BlazeFace with INT4 weights, run by a freestanding C engine compiled to WebAssembly (SIMD128) across 4 worker threads. No special hosting headers needed. Sources: `w4/` (engine), `scripts/export_w4.py`, `web/src/int4.js`. The earlier LiteRT page is kept in `web/litert.html` (`npm run build:litert`).

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wav2Lip // Neural Sync</title>
+<title>Wav2Lip // INT4 WASM</title>
 <link rel="icon" href="data:,">
 <script>
 // Enable cross-origin isolation (multithreaded CPU inference) through coi-sw.js, then reload once.
@@ -135,11 +135,12 @@ footer a{color:var(--cyan)}
 <div class="band">
   <header>
     <div>
-      <h1>Wav2Lip <span>//</span> Neural Sync</h1>
-      <p>Drop a face and a voice. The rig finds the face, re-synthesises the mouth with an INT8 Wav2Lip model and renders an MP4, all on your own hardware.</p>
+      <h1>Wav2Lip <span>//</span> INT4 Core</h1>
+      <p>Drop a face and a voice. A hand-written C engine on WebAssembly SIMD runs BlazeFace and Wav2Lip with INT4 weights across 4 threads, then renders an MP4, all on your own hardware.</p>
     </div>
     <div class="sys">
-      <span class="chip" id="cpu-note">CPU</span>
+      <span class="chip" id="cpu-note">WASM</span>
+      <span class="chip ok">INT4 weights</span>
       <span class="chip" id="model-state">Model: loading…</span>
     </div>
   </header>
@@ -223,22 +224,15 @@ footer a{color:var(--cyan)}
           </label>
         </div>
         <p class="hint">Lips smeared or doubled: lower the padding. Mouth jittering: raise the smoothing.</p>
-        <label class="pick" data-kind="model">
-          <span class="n">03</span>
-          <span><strong>Own model (optional)</strong><span class="name">fp32 or int8w .tflite from scripts/convert.py</span></span>
-          <span class="btn">Load</span>
-          <input type="file" accept=".tflite">
-        </label>
-        <p class="hint"><a href="#" id="clear-model">Use the built-in INT8 model again</a></p>
       </details>
-      <p class="hint">Runs a full-INT8 Wav2Lip on your CPU, multithreaded (up to 4 threads on phones). The model is about 37 MB and downloaded once.</p>
+      <p class="hint">Weights are INT4 (about 20 MB, downloaded once and saved on this device); activations are INT8 inside the engine. Needs a browser with WebAssembly SIMD and threads (Chrome, Edge, Firefox, Safari 16.4+).</p>
     </section>
   </main>
 </div>
 <footer class="band">
-  <p>Source: <a href="https://github.com/lucky-edgelord/wav2lip-tflite">wav2lip-tflite</a>. LiteRT.js runs Wav2Lip, MediaPipe BlazeFace finds faces, Mediabunny writes the MP4.</p>
+  <p>Source: <a href="https://github.com/lucky-edgelord/wav2lip-tflite">wav2lip-tflite</a> (engine in <code>w4/</code>). Mediabunny writes the MP4. Also: <a href="./litert.html">the LiteRT.js INT8 version</a>.</p>
   <p>Wav2Lip weights are licensed by their authors for research and non-commercial use only.</p>
 </footer>
-<script type="module" src="./app.js"></script>
+<script type="module" src="./int4.js"></script>
 </body>
 </html>
