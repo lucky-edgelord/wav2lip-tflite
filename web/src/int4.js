@@ -307,8 +307,10 @@ async function ensureEngine() {
   }
   let pick = gpu || cpu;
   if (gpu && cpu && !force) {   // both work: time one small batch on each and keep the faster
-    const z = [new Float32Array(4 * 1280), new Float32Array(4 * 221184)], bench = async (e) => { await e.run(0, z, 4); const t = performance.now(); await e.run(0, z, 4); return (performance.now() - t) / 4; };
-    const [tg, tc] = [await bench(gpu), await bench(cpu)];
+    const z = [new Float32Array(4 * 1280), new Float32Array(4 * 221184)], bench = async (e) => { await e.run(0, z, 1); const t = performance.now(); await e.run(0, z, 4); return (performance.now() - t) / 4; };
+    let tg = Infinity;
+    try { tg = await bench(gpu); } catch (err) { L.warn('WebGPU failed during the benchmark, using the CPU engine:', err); }
+    const tc = await bench(cpu);
     L.info(`backend benchmark: WebGPU ${tg.toFixed(0)} ms/frame, WASM x${cpu.threads} ${tc.toFixed(0)} ms/frame`);
     pick = tg < tc ? gpu : cpu;
   } else if (force === 'gpu' && gpu) pick = gpu;

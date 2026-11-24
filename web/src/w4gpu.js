@@ -193,7 +193,7 @@ export class W4GPU {
     const e = new W4GPU(); e.device = device; e.limits = want; e.models = [];
     const info = adapter.info || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : {});
     e.name = [info.vendor, info.architecture, info.description].filter(Boolean).join(' ') || 'WebGPU adapter';
-    device.lost.then((l) => log(`WebGPU device lost: ${l.message}`));
+    device.lost.then((l) => { e.lost = l.message || 'lost'; log(`WebGPU device lost: ${l.message}`); });
     device.addEventListener?.('uncapturederror', (ev) => log(`WebGPU error: ${ev.error.message}`));
     const module = device.createShaderModule({ code: WGSL });
     const info2 = await module.getCompilationInfo();
@@ -256,10 +256,16 @@ export class W4GPU {
         const sz = m.sizes[i], src = inputs[i].subarray((a + b) * sz, (a + b + 1) * sz);
         d.queue.writeBuffer(m.arena, (b * m.stride + m.offs[i]) * 4, src.buffer, src.byteOffset, sz * 4);
       }
-      const enc = d.createCommandEncoder(), pass = enc.beginComputePass();
-      for (const op of m.ops) { pass.setPipeline(this.pipe[op.t]); pass.setBindGroup(0, m.bg, [op.off]); pass.dispatchWorkgroups(op.x, op.y, c); }
-      pass.end();
-      const stg = [];
+      // Small submissions (one per op) and a periodic wait: mobile GPUs (Adreno/Mali) kill the device when a single submit
+      // runs for too long, which a whole batched network in one submit can do.
+      for (let i = 0; i < m.ops.length; i++) {
+        const op = m.ops[i], enc = d.createCommandEncoder(), pass = enc.beginComputePass();
+        pass.setPipeline(this.pipe[op.t]); pass.setBindGroup(0, m.bg, [op.off]); pass.dispatchWorkgroups(op.x, op.y, c);
+        pass.end(); d.queue.submit([enc.finish()]);
+        if (this.lost) throw new Error(`WebGPU device lost: ${this.lost}`);
+        if ((i & 3) === 3) await d.queue.onSubmittedWorkDone();
+      }
+      const enc = d.createCommandEncoder(), stg = [];
       for (let k = m.nin; k < m.nio; k++) {
         const sz = m.sizes[k], s = d.createBuffer({ size: sz * 4 * c, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         for (let b = 0; b < c; b++) enc.copyBufferToBuffer(m.arena, (b * m.stride + m.offs[k]) * 4, s, b * sz * 4, sz * 4);
