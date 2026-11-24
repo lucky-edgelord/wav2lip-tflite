@@ -11,7 +11,7 @@ const app = (await build({
 })).outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 const emb = [['w2l', 'assets/w2l_w4.bin', 'Wav2Lip INT4'], ['blaze', 'assets/blaze_w4.bin', 'BlazeFace INT4']]
   .map(([k, p, l]) => `<script type="text/plain" id="emb-${k}" data-label="${l}">${b64(p)}</script>`).join('\n');
-let html = readFileSync('index.html', 'utf8')
+let html = readFileSync('int4.html', 'utf8')
   .replace(/<script>\n\/\/ Enable cross-origin isolation[\s\S]*?<\/script>/, '')   // threads no longer need isolation
   .replace('<script type="module" src="./int4.js"></script>', () => `${emb}\n<script>${app}</script>`)
   .replace('Weights are INT4 (about 20 MB, downloaded once and saved on this device); activations are INT8 inside the engine. Needs a browser with WebAssembly SIMD and threads (Chrome, Edge, Firefox, Safari 16.4+).',

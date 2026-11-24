@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build-single.mjs dist",
-    "build:litert": "node build.mjs"
+    "build": "node build.mjs",
+    "build:int4": "node build-single.mjs dist-int4"
   },
   "dependencies": {
     "@litertjs/core": "2.6.0",
