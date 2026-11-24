@@ -20,7 +20,7 @@ export class W4 {
       for (const w of e.workers) try { w.terminate(); } catch {}
       e.workers = []; e.local = new Core(e.module, memMB);
     }
-    e.threads = e.workers.length || 1;
+    e.threads = e.workers.length || 1; e.backend = 'wasm';
     return e;
   }
   onMessage(t, m) { const p = this.waiting[t]; if (!p) return; this.waiting[t] = null; m.t === 'error' ? p.rej(new Error(`worker ${t}: ${m.error}`)) : p.res(m); }

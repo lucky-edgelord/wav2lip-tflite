@@ -8,6 +8,7 @@ import {
 } from 'mediabunny';
 import { melspectrogram, melChunkStarts, writeMelChunk, SAMPLE_RATE } from './mel.js';
 import { W4 } from './w4.js';
+import { W4GPU } from './w4gpu.js';
 
 /* global __BUILD__, __MANIFEST__, __WASM_ST_B64__, __WORKER__ */
 const BUILD = typeof __BUILD__ === 'string' ? __BUILD__ : 'dev';
@@ -281,20 +282,41 @@ fetchModel('blaze').then(() => fetchModel('w2l')).catch(() => {});
 async function ensureEngine() {
   if (engine) return engine;
   const [w2l, blaze] = [await fetchModel('w2l'), await fetchModel('blaze')];
-  const b64 = typeof __WASM_ST_B64__ !== 'undefined' ? __WASM_ST_B64__ : null;
-  const wasm = b64 ? Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer
-    : await L.step('fetch engine (w4_st.wasm)', async () => (await fetch(base('./assets/w4_st.wasm'))).arrayBuffer());
-  // Each worker owns a full copy of the engine and models and gets whole frames by message: no shared memory, so no
-  // cross-origin isolation is needed and 4 threads work on any host (and when opened from a file).
-  const workerUrl = typeof __WORKER__ !== 'undefined' ? URL.createObjectURL(new Blob([__WORKER__], { type: 'text/javascript' })) : base('./w4worker.js');
-  const eng = await L.step(`start the INT4 engine (${THREADS} threads)`, () => W4.create({
-    wasm, threads: THREADS, memMB: 96, log: (m) => L.info(m),
-    makeWorker: () => new Worker(workerUrl, typeof __WORKER__ !== 'undefined' ? {} : { type: 'module' }),
-  }));
-  await L.step('load Wav2Lip INT4 into the workers', () => eng.loadModel(0, w2l, W));
-  await L.step('load BlazeFace INT4 into the workers', () => eng.loadModel(1, blaze, W));
-  L.info(`INT4 engine ready on ${eng.threads} thread(s)`);
-  return (engine = eng);
+  const force = new URLSearchParams(location.search).get('backend');   // ?backend=gpu | cpu
+  const loadInto = async (eng, tag) => {
+    await L.step(`load Wav2Lip INT4 (${tag})`, () => eng.loadModel(0, w2l, W));
+    await L.step(`load BlazeFace INT4 (${tag})`, () => eng.loadModel(1, blaze, W));
+  };
+  let gpu = null, cpu = null;
+  if (force !== 'cpu' && navigator.gpu) {
+    try { gpu = await L.step('start WebGPU engine (INT4 dequantized in the shader)', () => W4GPU.create({ log: (m) => L.info(m) })); await loadInto(gpu, 'GPU'); }
+    catch (err) { L.warn('WebGPU unavailable:', err); gpu = null; }
+  }
+  if (force !== 'gpu' || !gpu) {
+    const b64 = typeof __WASM_ST_B64__ !== 'undefined' ? __WASM_ST_B64__ : null;
+    const wasm = b64 ? Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer
+      : await L.step('fetch engine (w4_st.wasm)', async () => (await fetch(base('./assets/w4_st.wasm'))).arrayBuffer());
+    // Each worker owns a full copy of the engine and models and gets whole frames by message: no shared memory, so no
+    // cross-origin isolation is needed and 4 threads work on any host (and when opened from a file).
+    const workerUrl = typeof __WORKER__ !== 'undefined' ? URL.createObjectURL(new Blob([__WORKER__], { type: 'text/javascript' })) : base('./w4worker.js');
+    cpu = await L.step(`start the WASM engine (${THREADS} threads)`, () => W4.create({
+      wasm, threads: THREADS, memMB: 96, log: (m) => L.info(m),
+      makeWorker: () => new Worker(workerUrl, typeof __WORKER__ !== 'undefined' ? {} : { type: 'module' }),
+    }));
+    await loadInto(cpu, 'CPU'); cpu.backend = 'wasm';
+  }
+  let pick = gpu || cpu;
+  if (gpu && cpu && !force) {   // both work: time one small batch on each and keep the faster
+    const z = [new Float32Array(4 * 1280), new Float32Array(4 * 221184)], bench = async (e) => { await e.run(0, z, 4); const t = performance.now(); await e.run(0, z, 4); return (performance.now() - t) / 4; };
+    const [tg, tc] = [await bench(gpu), await bench(cpu)];
+    L.info(`backend benchmark: WebGPU ${tg.toFixed(0)} ms/frame, WASM x${cpu.threads} ${tc.toFixed(0)} ms/frame`);
+    pick = tg < tc ? gpu : cpu;
+  } else if (force === 'gpu' && gpu) pick = gpu;
+  const lose = pick === gpu ? cpu : gpu;
+  if (lose) { try { lose.workers?.forEach((w) => w.terminate()); lose.device?.destroy(); } catch {} }
+  L.info(`INT4 engine ready: ${pick.backend === 'webgpu' ? 'WebGPU (' + pick.name + ')' : `WASM SIMD x${pick.threads}`}`);
+  const cn = $('cpu-note'); cn.textContent = pick.backend === 'webgpu' ? 'WebGPU compute' : `WASM SIMD · ${pick.threads} threads`; cn.classList.add('ok');
+  return (engine = pick);
 }
 
 // ---------- BlazeFace post-processing (anchors, decode, weighted NMS) ----------
@@ -374,7 +396,7 @@ async function run() {
     const starts = melChunkStarts(mel.frames, fps);
     const n = starts.length;
     L.info(`Plan: ${n} frames at ${fps} fps, rounds of ${W}, output ${src.w}×${src.h}`);
-    $('acc').textContent = `Wav2Lip + BlazeFace INT4 · C engine on WebAssembly SIMD · ${engine ? engine.threads : THREADS} thread(s)`;
+    $('acc').textContent = `Wav2Lip + BlazeFace INT4 · ${engine && engine.backend === 'webgpu' ? 'WebGPU compute shaders' : `C engine on WebAssembly SIMD · ${engine ? engine.threads : THREADS} thread(s)`}`;
 
     view.width = src.w; view.height = src.h;
     hud(`${src.w}×${src.h} · ${fps} FPS`);
@@ -515,5 +537,4 @@ $('cancel').addEventListener('click', () => { cancelled = true; status('Cancelli
 $('save').addEventListener('click', save);
 $('open-log').addEventListener('click', openDrawer);
 $('retry').addEventListener('click', () => { fetchModel('blaze').then(() => fetchModel('w2l')).catch(() => {}); });
-$('cpu-note').textContent = `WASM SIMD · ${THREADS} threads`;
-$('cpu-note').classList.add('ok');
+$('cpu-note').textContent = navigator.gpu ? 'WebGPU / WASM' : `WASM SIMD · ${THREADS} threads`;

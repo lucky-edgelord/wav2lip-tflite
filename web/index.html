@@ -136,7 +136,7 @@ footer a{color:var(--cyan)}
   <header>
     <div>
       <h1>Wav2Lip <span>//</span> INT4 Core</h1>
-      <p>Drop a face and a voice. A hand-written C engine on WebAssembly SIMD runs BlazeFace and Wav2Lip with INT4 weights across 4 threads, then renders an MP4, all on your own hardware.</p>
+      <p>Drop a face and a voice. BlazeFace and Wav2Lip run with INT4 weights on WebGPU compute shaders (dequantized on the fly, like llama.cpp) or, if that is slower or missing, a hand-written C engine on WebAssembly SIMD across 4 threads, then render an MP4, all on your own hardware.</p>
     </div>
     <div class="sys">
       <span class="chip" id="cpu-note">WASM</span>
