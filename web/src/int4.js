@@ -288,43 +288,49 @@ async function ensureEngine() {
     await L.step(`load Wav2Lip INT4 (${tag})`, () => eng.loadModel(0, w2l, W));
     await L.step(`load BlazeFace INT4 (${tag})`, () => eng.loadModel(1, blaze, W));
   };
-  // Preference order: WebGPU -> WebGL2 -> WASM threads. Each GPU path is only kept if it survives a real run.
   const z = [new Float32Array(4 * 1280), new Float32Array(4 * 221184)];
-  const bench = async (e) => { await e.run(0, z, 1); const t = performance.now(); await e.run(0, z, 4); return (performance.now() - t) / 4; };
-  const gpus = [];
-  for (const [name, mk, ok] of [['WebGPU', () => W4GPU.create({ log: (m) => L.info(m) }), !!navigator.gpu && force !== 'webgl'],
-                                 ['WebGL2', () => W4GL.create({ log: (m) => L.info(m) }), force !== 'gpu' && true]]) {
-    if (force === 'cpu' || !ok) continue;
-    if (force === 'gpu' && gpus.length) break;
-    try {
-      const e = await L.step(`start ${name} engine (INT4 dequantized in the shader)`, mk);
-      await loadInto(e, name); e.ms = force ? 0 : await bench(e); e.tag = name; gpus.push(e);
-      L.info(`${name}: ${e.ms.toFixed(0)} ms/frame`);
-      if (force === 'webgl' || force === 'gpu') break;
-      if (name === 'WebGPU' && e.ms < 400) break;   // a working, reasonably fast WebGPU: no need to also try WebGL
-    } catch (err) { L.warn(`${name} unavailable:`, err); }
-  }
-  let gpu = gpus.length ? gpus.reduce((x, y) => (y.ms < x.ms ? y : x)) : null, cpu = null;
-  if (!gpu || (force !== 'gpu' && force !== 'webgl')) {
+  const bench = async (e, n = 4) => { await e.run(0, z, 1); const t = performance.now(); await e.run(0, z, n); return (performance.now() - t) / n; };
+  const startCpu = async () => {
     const b64 = typeof __WASM_ST_B64__ !== 'undefined' ? __WASM_ST_B64__ : null;
     const wasm = b64 ? Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer
       : await L.step('fetch engine (w4_st.wasm)', async () => (await fetch(base('./assets/w4_st.wasm'))).arrayBuffer());
     // Each worker owns a full copy of the engine and models and gets whole frames by message: no shared memory, so no
     // cross-origin isolation is needed and 4 threads work on any host (and when opened from a file).
     const workerUrl = typeof __WORKER__ !== 'undefined' ? URL.createObjectURL(new Blob([__WORKER__], { type: 'text/javascript' })) : base('./w4worker.js');
-    cpu = await L.step(`start the WASM engine (${THREADS} threads)`, () => W4.create({
+    const e = await L.step(`start the WASM engine (${THREADS} threads)`, () => W4.create({
       wasm, threads: THREADS, memMB: 96, log: (m) => L.info(m),
       makeWorker: () => new Worker(workerUrl, typeof __WORKER__ !== 'undefined' ? {} : { type: 'module' }),
     }));
-    await loadInto(cpu, 'CPU'); cpu.backend = 'wasm';
+    await loadInto(e, 'CPU'); e.backend = 'wasm'; return e;
+  };
+  // Preference: WebGPU -> WebGL2 -> WASM threads, but a GPU path is only used when it actually beats the CPU engine on this
+  // device. The verdict is remembered, so the benchmark runs once per device/browser (add ?backend=auto to redo it).
+  const key = 'w2l-backend-v1:' + navigator.userAgent, saved = (() => { try { return localStorage.getItem(key); } catch { return null; } })();
+  const remember = (v) => { try { localStorage.setItem(key, v); } catch {} };
+  let pick = null, cpu = null, gpus = [];
+  if (force === 'cpu' || (!force && saved === 'wasm') || (!force && !navigator.gpu && !self.WebGL2RenderingContext)) { pick = cpu = await startCpu(); }
+  else {
+    const candidates = [['WebGPU', () => W4GPU.create({ log: (m) => L.info(m) }), !!navigator.gpu && force !== 'webgl'],
+                        ['WebGL2', () => W4GL.create({ log: (m) => L.info(m) }), force !== 'gpu']];
+    const want = (n) => force ? true : (!saved || saved === 'auto' || saved === n);
+    let tc = Infinity;
+    if (!force) { cpu = await startCpu(); tc = await bench(cpu); L.info(`WASM x${cpu.threads}: ${tc.toFixed(0)} ms/frame`); }
+    for (const [name, mk, ok] of candidates) {
+      if (!ok || !want(name) || gpus.length) continue;
+      try {
+        const e = await L.step(`start ${name} engine (INT4 dequantized in the shader)`, mk);
+        await loadInto(e, name); e.tag = name;
+        if (force) { gpus.push(e); break; }
+        const ms = await bench(e, 1); e.ms = ms; L.info(`${name}: ${ms.toFixed(0)} ms/frame`);
+        if (ms < tc) gpus.push(e);
+        else { L.info(`${name} is slower than the CPU threads on this device`); try { e.device?.destroy(); e.gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
+               if (name === 'WebGPU' && navigator.gpu) break; }   // same GPU: WebGL2 would not be faster
+      } catch (err) { L.warn(`${name} unavailable:`, err); }
+    }
+    pick = gpus[0] || cpu || (cpu = await startCpu());
+    if (!force) remember(pick.backend === 'wasm' ? 'wasm' : pick.tag);
   }
-  let pick = gpu || cpu;
-  if (gpu && cpu && !force) {
-    const tc = await bench(cpu);
-    L.info(`backend benchmark: ${gpu.tag} ${gpu.ms.toFixed(0)} ms/frame, WASM x${cpu.threads} ${tc.toFixed(0)} ms/frame`);
-    pick = gpu.ms < tc ? gpu : cpu;
-  }
-  for (const e of [...gpus, cpu]) if (e && e !== pick) { try { e.workers?.forEach((w) => w.terminate()); e.device?.destroy(); e.gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch {} }
+  if (cpu && cpu !== pick) { try { cpu.workers?.forEach((w) => w.terminate()); } catch {} }
   L.info(`INT4 engine ready: ${pick.backend === 'wasm' ? `WASM SIMD x${pick.threads}` : `${pick.tag} (${pick.name})`}`);
   const cn = $('cpu-note'); cn.textContent = pick.backend === 'wasm' ? `WASM SIMD · ${pick.threads} threads` : `${pick.tag} compute`; cn.classList.add('ok');
   return (engine = pick);
